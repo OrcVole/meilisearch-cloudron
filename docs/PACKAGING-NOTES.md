@@ -4,6 +4,44 @@ Anonymised. Box-specific detail lives in the maintainer's local notes, not here.
 
 ---
 
+## 2026-07-31: Phase 5, shipping image built, scanned, pushed and pinned; gate ladder blocked
+
+The image that will ship now exists in the registry and its digest is pinned in the manifest. The
+gate ladder did not start, because the platform cannot pull a private registry package.
+
+**Verified:**
+
+- The shipping image is built from the committed tree rather than the working copy. `git archive
+  HEAD` was exported to a scratch directory and `podman build --no-cache` run there, so nothing
+  uncommitted could enter the build context. The build reproduced the linkage gate exactly:
+  `sha256sum -c` printing `/tmp/meilisearch: OK`, then `linkage gate passed for 1.51.0`.
+- The secret and anonymity release gate passes over **both** surfaces for the first time. Until now
+  only the repository file set had been scanned, because no image existed. The image scan greps
+  `/app`, `/etc`, `/root`, `/home`, `/usr/local` and `/opt` inside the built image for box
+  specifics, identities and credential shapes, and found none. The base image's three inert SSH
+  host keys matched their pinned digests exactly: `3 found, 3 pinned-ok, 3 expected`. The
+  pinned-digest allowlist written at the Dockerfile phase, which had never been exercised, works.
+- **The digest to pin must come from the registry, not from the local image record.** Straight
+  after a successful `podman push`, the local `RepoDigests` named a manifest the registry does not
+  have: pulling it returns `manifest unknown`, while `skopeo inspect` against the tag returns a
+  different digest. Pinning the local value would have produced a `dockerImage` no client could
+  pull, and the failure would have surfaced only on a stranger's box. Resolve the digest with
+  `skopeo inspect` against the registry every time.
+
+**The blocker, stated plainly:** the platform pulls images with its own Docker daemon, and the
+`cloudron` CLI has no option for registry credentials. A private registry package therefore cannot
+be installed by digest at all; the install fails at the `Downloading image` step with
+`statusCode: 401` and leaves the app in `error (pending_install)`. This is the ordering cost of
+publishing the image before the ladder runs, and it is worth planning for: either the package is
+made public before the ladder (which means publishing an unproven artefact, though only its
+visibility, not any claim about it), or the host daemon is given credentials out of band. The
+errored install was uninstalled so the location is free for the retry.
+
+**Still assumed after this phase:** everything the gate ladder exists to prove. Nothing about
+platform behaviour was learned, because nothing ran on the platform.
+
+---
+
 ## 2026-07-30: Phases 2 to 4, Dockerfile, entrypoint, backup script, local smoke test
 
 The image now exists and was exercised locally with rootless podman against throwaway data

@@ -111,6 +111,41 @@ if the operator wants it; it is proposed here, not assumed.
 or a plain HTTP Request node against this application's REST API with a scoped key, from any n8n
 workflow.
 
+## Operator settings: /app/data/env
+
+Create `/app/data/env` through the file manager or a terminal to override the defaults this
+package computes. It is a plain shell fragment, one `KEY=value` per line, sourced by the
+entrypoint before anything else is computed, and it takes effect on the next restart. It is read
+with root's authority, so treat it as privileged.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MEILI_LOG_LEVEL` | `INFO` | `OFF`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE` |
+| `MEILI_MAX_INDEXING_MEMORY` | cgroup limit divided by three | bytes of indexing buffer |
+| `MEILI_MAX_INDEXING_THREADS` | half the available cores | indexing parallelism |
+| `MEILI_SCHEDULE_SNAPSHOT` | `86400` | seconds between the built-in snapshots |
+| `MEILI_HTTP_PAYLOAD_SIZE_LIMIT` | 100 MB | largest accepted request body |
+| `MEILI_TASK_WEBHOOK_URL` | unset | a URL Meilisearch posts finished tasks to |
+| `MEILI_EXPERIMENTAL_ENABLE_METRICS` | unset | `true` exposes the Prometheus route at `/metrics` |
+| `MEILI_EXPERIMENTAL_CONTAINS_FILTER` | unset | `true` enables the `CONTAINS` filter operator |
+| `MEILISEARCH_UPGRADE_TIMEOUT` | `3600` | seconds allowed for a data store upgrade at boot |
+| `MEILISEARCH_HEALTH_TIMEOUT` | `300` | seconds to wait for health before giving up on the marker |
+| `MEILISEARCH_RETAIN_SNAPSHOTS` | `2` | snapshot files kept in `/app/data/snapshots` |
+| `MEILISEARCH_RETAIN_DUMPS` | `2` | dump files kept in `/app/data/dumps` |
+| `MEILISEARCH_QUARANTINE_DAYS` | `30` | age at which a quarantined data store is deleted |
+
+Any other `MEILI_EXPERIMENTAL_*` flag the pinned version accepts can be set the same way. Note
+that the experimental features controlled through `PATCH /experimental-features` are runtime API
+settings stored in the database, not environment variables, and are set with a request rather than
+through this file.
+
+The following are set by the package after this file is read, so setting them here has no effect:
+`MEILI_ENV`, `MEILI_HTTP_ADDR`, `MEILI_DB_PATH`, `MEILI_SNAPSHOT_DIR`, `MEILI_DUMP_DIR`,
+`MEILI_NO_ANALYTICS`, `MEILI_MASTER_KEY`, `MEILI_IMPORT_SNAPSHOT`, `MEILI_IMPORT_DUMP`, and
+`MEILI_UPGRADE_DB`. The restore decision tree owns the import and upgrade variables, and the rest
+are structural: changing them would move data out of the backed-up tree or turn off
+authentication.
+
 ## Backup, restore and update
 
 Cloudron backs up `/app/data` as a live copy while the application keeps running, and separately

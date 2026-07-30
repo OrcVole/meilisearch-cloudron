@@ -38,3 +38,25 @@ behaves in practice under indexing.
 - This decision is unexercised at the scaffold phase: no image exists yet, so the 2 GB starting
   point, the divide-by-three computation, and the actual cgroup RSS under load are all to be
   measured, not assumed, at Gate 4.
+
+## History
+
+**2026-07-30, entrypoint phase.** The computation is implemented and proven; the limit itself is
+still unmeasured.
+
+`start.sh` reads `/sys/fs/cgroup/memory.max` (cgroup v2), falls back to
+`/sys/fs/cgroup/memory/memory.limit_in_bytes` (cgroup v1), and falls back again to `MemTotal` from
+`/proc/meminfo` when neither carries a real limit, which covers both the cgroup v2 `max` sentinel
+and the enormous sentinel cgroup v1 uses. The result is divided by three with a 256 MiB floor and
+exported as `MEILI_MAX_INDEXING_MEMORY`, and the resolved value and its source are logged on every
+boot.
+
+Verified locally with a 1 GiB container limit: the container read `1073741824` from
+`memory.max`, the entrypoint logged `limit 1024 MiB from cgroup v2 memory.max; indexing memory
+341 MiB (limit / 3, floor 256 MiB)`, and the running process's environment carried
+`MEILI_MAX_INDEXING_MEMORY=357913941`, which is exactly the limit divided by three. With no
+container limit set, the same code correctly reported that it had fallen back to host `MemTotal`.
+An operator value in `/app/data/env` is honoured instead of the computed one, and the log says so.
+
+The divisor and the 2 GB `memoryLimit` remain unmeasured against a real indexing load. That is
+Gate 4's job.

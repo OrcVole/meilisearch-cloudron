@@ -147,11 +147,19 @@ else
   # --- the base image's own inert SSH host keys: whitelist BY EXACT PATH, with a VISIBLE COUNT ---
   # cloudron/base ships inert SSH host keys; no sshd runs in this application and the Dockerfile
   # never touches ssh, so they are noise, not a leak, PROVIDED they match the exact digests the
-  # pinned base image ships. Those digests are not yet captured: no Dockerfile exists at this
-  # phase, so this map is deliberately empty rather than guessed. Fill it in, pinned by sha256, once
-  # the Dockerfile pins cloudron/base and a real image can be inspected. Until then, ANY host key
-  # found in the image fails loudly, which is the safe default, not a false convenience.
-  declare -A PINNED_SSH=()
+  # pinned base image ships.
+  #
+  # Filled in 2026-07-30, at the Dockerfile phase, the moment this map was written to wait for.
+  # Each digest below was taken by running sha256sum inside
+  # cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c
+  # itself, and confirmed byte-identical in the built application image. They are therefore the
+  # base image's own keys, shipped to every package built on it, and not anything this repository
+  # introduced. Any key that is new, changed, extra, or missing still fails loudly.
+  declare -A PINNED_SSH=(
+    [/etc/ssh/ssh_host_ecdsa_key]=677458f83d985da3fd7cdd208e90e4eac09da5be205425a5f96a6242dc985c33
+    [/etc/ssh/ssh_host_ed25519_key]=0c575ce8d9ba487b05cc473fad4b0650fb950181028e6ac19796f86f56f22a7a
+    [/etc/ssh/ssh_host_rsa_key]=ae0ea8087e90baf138d277ca52b6cf47b5010adc0e5bd84236713eee1b85de85
+  )
   ssh_listing="$("$CRI" run --rm --user 0 --entrypoint /bin/bash "$IMAGE" \
                   -c 'for f in /etc/ssh/ssh_host_*_key; do [ -e "$f" ] && sha256sum "$f"; done' 2>/dev/null)"
   found=0; pinned_ok=0

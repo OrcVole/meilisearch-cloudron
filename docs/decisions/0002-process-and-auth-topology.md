@@ -39,3 +39,29 @@ and the box is the authority. Addons are `localstorage` only; `MEILI_NO_ANALYTIC
 - This decision is unexercised at the scaffold phase: no image exists yet, so the exact behaviour
   of `/health` with and without a key, and the precise error body Meilisearch returns to an
   unauthenticated request, are both to be confirmed, not assumed, at Gate 1.
+
+## History
+
+**2026-07-30, entrypoint phase.** The auth topology is confirmed as designed; the process
+topology needed one correction.
+
+Confirmed empirically on a local container built from this package: `GET /health` answers 200
+with no credential while a master key is set; `GET /version` and `POST /indexes/*/search` answer
+401 with the documented `missing_authorization_header` body and 200 with the key; and `GET /` in
+production mode returns `{"status":"Meilisearch is running"}` as `application/json`, with no HTML
+and no search preview interface anywhere in the response.
+
+**The correction is the last line of `start.sh`.** This record specified
+`exec gosu cloudron:cloudron /app/code/meilisearch`, which makes Meilisearch PID 1. Meilisearch
+installs no `SIGTERM` handler, and the kernel gives a process running as PID 1 no default signal
+dispositions, so as PID 1 it ignores `SIGTERM` outright. Measured locally: a stop request was
+ignored for the full 60 second grace period and the container was then `SIGKILL`ed. Every stop,
+restart, update, and backup-triggered restart would have ended in an ungraceful kill of a
+database process.
+
+The line is therefore `exec /usr/bin/tini -- gosu cloudron:cloudron /app/code/meilisearch ...`.
+`tini` is already present in `cloudron/base:5.0.0`, and upstream's own container image uses it as
+its entrypoint for the same reason. With `tini` as PID 1 the same stop completes in 187ms with
+exit code 143. This does not change the auth topology, the single-process design, or the drop to
+the `cloudron` user; it changes only which process holds PID 1. The related signal problem inside
+the supervised upgrade phase is recorded in ADR 0005.

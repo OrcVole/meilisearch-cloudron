@@ -79,10 +79,37 @@ should stay true; if one of them stops being true, something has regressed.
 | The package's structural settings beat `/app/data/env` | Decoy file setting `MEILI_ENV=development` and `MEILI_DB_PATH=/tmp/hijacked` had no effect on either |
 | Indexing memory follows the cgroup, not the host | 1 GiB limit produced `MEILI_MAX_INDEXING_MEMORY=357913941` |
 
+## Release-gate evidence: the shipping image (2026-07-31)
+
+The shipping image was built from the committed tree, scanned, and pushed. These rows are real
+evidence, unlike the gate tables below, but they prove the artefact, not the platform behaviour.
+
+| Invariant | Proof |
+|---|---|
+| The image is built from the committed tree, not a working copy | `git archive HEAD` exported to a scratch directory, `podman build --no-cache` run there; tree hash `b953052` |
+| The linkage gate passes in the shipping build | Build log: `linkage gate passed for 1.51.0`, preceded by `/tmp/meilisearch: OK` from `sha256sum -c` |
+| The published artefact carries no credential shapes, box specifics or identities | `test/secret-scan.sh` over both surfaces: repository file set (26 files, one allowlisted sanctioned `contactEmail` line) and the image filesystem (`/app /etc /root /home /usr/local /opt`), exit 0, `secret-scan OK` |
+| The base image's inert SSH host keys are the pinned ones and nothing else | Image scan: `host keys: 3 found, 3 pinned-ok, 3 expected`, each `pinned-ok` by exact sha256 |
+| The registry digest is what the manifest pins | `skopeo inspect --format '{{.Digest}}' docker://ghcr.io/orcvole/meilisearch-cloudron:1.51.0-1` returns `sha256:13726db11bd9545985ae5e98f6efb9ada660bcdd87958d827e085328389e842e`, which is the `dockerImage` value |
+
+**Trap worth remembering: podman's local `RepoDigests` after a push can name a manifest the
+registry does not have.** Immediately after `podman push`, `podman image inspect --format
+'{{json .RepoDigests}}'` reported
+`ghcr.io/orcvole/meilisearch-cloudron@sha256:476bd0e18189...`, and pulling that digest from the
+registry fails with `manifest unknown`. The registry's own answer for the same tag is
+`sha256:13726db11bd9...`. The local value is the digest of the locally stored manifest, which is
+not necessarily the one the registry ended up storing. Always resolve the digest to pin with
+`skopeo inspect` against the registry, never from the local image record. Pinning the local value
+would have produced a manifest whose `dockerImage` no client can ever pull.
+
 ## Gate evidence tables
 
 Each gate below is unrun. When a gate runs for real, replace its row with the actual evidence: a
 status code, a hash, a count, a log line, and the date. An inference is not evidence.
+
+Gates 0 to 4 are blocked as of 2026-07-31: the image is published to a private registry package,
+and the platform's own image pull has no credential path. See "Known failures" for the exact
+error and the ways out.
 
 ### Gate 0: install and first boot
 
@@ -131,6 +158,19 @@ status code, a hash, a count, a log line, and the date. An inference is not evid
 ## Known failures
 
 Format: Symptom / Cause / Fix.
+
+**`cloudron install --image ...@sha256:...` fails with `Unable to pull image ... statusCode: 401`.**
+Cause: the container registry package is still private. The platform pulls the image with its own
+Docker daemon, and the `cloudron` CLI has no flag for registry credentials, so a private package
+cannot be installed by digest no matter how the CLI session is authenticated. Observed on
+2026-07-31 against `ghcr.io/orcvole/meilisearch-cloudron@sha256:13726db11bd9...`: the install
+reached `Downloading image` and then failed, leaving the app record in `error (pending_install)`.
+Fix, in order of preference: flip the registry package to public, which is a one-time manual step
+in the registry's own web interface and is required for publication anyway; or log the platform
+host's Docker daemon into the registry with the token on standard input, which needs shell access
+to the host; or configure registry credentials in the platform's own settings if the box version
+offers them. There is no package-side fix, and no amount of retrying changes the result. Clean up
+the errored app record with `cloudron uninstall` before retrying, so the location is free.
 
 **Stopping, restarting, or updating the app takes the full grace period and ends in a kill.**
 Cause: Meilisearch installs no `SIGTERM` handler, and a process running as PID 1 receives no

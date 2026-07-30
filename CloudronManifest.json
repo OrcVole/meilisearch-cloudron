@@ -1,0 +1,39 @@
+{
+  "id": "io.github.orcvole.meilisearch",
+  "title": "Meilisearch",
+  "author": "OrcVole",
+  "tagline": "Lightning-fast, typo-tolerant search API for your own apps and data",
+  "description": "file://DESCRIPTION.md",
+  "changelog": "file://CHANGELOG.md",
+  "icon": "file://logo.png",
+  "version": "0.1.0",
+  "upstreamVersion": "1.51.0",
+  "healthCheckPath": "/health",
+  "httpPort": 7700,
+  "addons": {
+    "localstorage": {}
+  },
+  "persistentDirs": [
+    "/app/db"
+  ],
+  "backupCommand": "/app/code/backup-snapshot.sh",
+  "memoryLimit": 2147483648,
+  "postInstallMessage": "file://POSTINSTALL.md",
+  "checklist": {
+    "masterkey": {
+      "message": "Get your master key: open a Terminal for this app (the `>_` button) and run `cat /app/data/master-key`. Every route except GET /health requires it, or a key minted from it via POST /keys. See POSTINSTALL.md."
+    }
+  },
+  "tags": [
+    "search",
+    "api",
+    "developer"
+  ],
+  "website": "https://github.com/OrcVole/meilisearch-cloudron",
+  "documentationUrl": "https://github.com/OrcVole/meilisearch-cloudron",
+  "contactEmail": "Most+github@OrcadianVole.com",
+  "packagerName": "OrcVole",
+  "packagerUrl": "https://github.com/OrcVole/meilisearch-cloudron",
+  "manifestVersion": 2,
+  "minBoxVersion": "9.1.0"
+}

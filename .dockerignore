@@ -1,0 +1,23 @@
+# Keep the build context minimal and free of secrets. A .gitignore does NOT protect the Docker
+# build context; only this file does. Verify the built image filesystem has no credentials.
+
+# Secrets and local credentials (defensive; these live outside the context, but never ship them).
+*token*.txt
+*.token
+.secrets/
+.env
+.env.*
+*.key
+.cloudron.json
+
+# Repository material not needed inside the image.
+.git/
+.gitignore
+*.md
+docs/
+test/
+screenshots/
+phase-notes/
+.anonymize-list
+.claude/
+logo.png

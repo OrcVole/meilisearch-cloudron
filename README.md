@@ -1,0 +1,160 @@
+# Meilisearch for Cloudron
+
+This repository packages [Meilisearch](https://github.com/meilisearch/meilisearch), the open
+source, typo-tolerant search engine written in Rust, as a Cloudron application. It keeps the
+upstream binary unmodified and adds only a Cloudron-conformant runtime: a multi-stage Dockerfile,
+an entrypoint that prepares and secures the runtime, a manifest, and the backup and restore
+plumbing that a database-class application needs.
+
+Meilisearch and the Meilisearch name and logo are trademarks of their respective owner. This
+package is community-maintained and is not affiliated with or endorsed by the Meilisearch project.
+
+## Architecture
+
+Meilisearch runs as a single headless process in production mode, with no dashboard, no single
+sign-on, and no LDAP or OIDC integration. The application exists to serve a search API to
+programmatic clients, and placing Cloudron login in front of the whole domain would answer every
+one of those clients with a login redirect instead of the search response they expect, which
+defeats the point of the package. The one route Cloudron itself needs is `GET /health`, which
+stays open even once a master key is set, so the platform health check needs no credential. Every
+other route, including `GET /version`, requires the master key or a key derived from it. On first
+launch the package generates the master key, stores it at `/app/data/master-key`, and never
+regenerates it, because every key Meilisearch issues afterwards, including the default search and
+admin keys and any scoped key an operator mints later through `POST /keys`, is derived from that
+master key. Losing it, or letting it be regenerated, invalidates every key a consumer already
+holds, so a missing key file next to an existing data store is treated as a stop condition rather
+than a reason to generate a new one.
+
+Persistent state is split across two locations with different treatment, because Meilisearch's
+data store behaves like a database rather than a static file tree. The store itself (`data.ms`) is
+an LMDB-backed structure that changes constantly under indexing, so it lives on a Cloudron
+`persistentDirs` path (`/app/db`), a mechanism available from Cloudron 9.1 that keeps a hot,
+churning store out of the ordinary backup file walk while still being carried through every
+backup, clone, and restore. Everything else, including the master key, operator overrides, and the
+retained snapshots and dumps, lives under the regular `/app/data` addon storage that Cloudron's
+file walk backs up directly. A `backupCommand` script runs, at backup time, in a short-lived
+container separate from the running application, and asks the live Meilisearch instance, over its
+own API, to write a consistent snapshot into `/app/data`. On the next boot after a clone or an
+in-place restore, when `/app/db` is found empty, the newest snapshot there, or the newest dump if
+no snapshot exists, is imported back in. This two-tier design is what lets the package answer the
+backup objection that Cloudron staff raised about Meilisearch in 2020, rather than working around
+it.
+
+## Install
+
+Point the Cloudron CLI at a chosen domain and build on the server (no local Docker engine is
+needed):
+
+```
+cloudron install --location search.example.com
+```
+
+The image is not yet published; this repository is at the scaffold stage. See
+`docs/PACKAGING-NOTES.md` for the current state of the build.
+
+## First steps
+
+Meilisearch works immediately after install; there is no setup wizard.
+
+**Read the master key.** Open this app's Terminal (the `>_` button) or run `cloudron exec`, then:
+
+```
+cat /app/data/master-key
+```
+
+**Use the key.** Send it as the `Authorization: Bearer <key>` header on every request except
+`GET /health`, which stays open:
+
+```
+curl https://search.example.com/health
+curl https://search.example.com/indexes -H "Authorization: Bearer <master-key>"
+```
+
+**Mint a scoped key for each consumer**, rather than handing out the master key itself, with
+`POST /keys`:
+
+```
+curl -X POST https://search.example.com/keys \
+  -H "Authorization: Bearer <master-key>" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "description": "Example consumer, search only",
+    "actions": ["search"],
+    "indexes": ["*"],
+    "expiresAt": null
+  }'
+```
+
+Keep the master key itself out of application configuration wherever a scoped key will do; revoke
+a scoped key at any time without disturbing any other consumer.
+
+## Wiring to other applications
+
+Each wiring change below is a stub for now, expanded as this package moves past the scaffold
+stage. In every case, mint a scoped key for the consumer rather than sharing the master key, unless
+the consumer's own documentation states that it requires full access.
+
+**LibreChat.** LibreChat has native Meilisearch support for chat search, configured with
+`SEARCH=true`, `MEILI_HOST`, and `MEILI_MASTER_KEY` (or a scoped key, if LibreChat's current
+version supports one; verify against its own documentation before wiring). LibreChat rebuilds its
+search index from its primary database, so pointing it at a fresh Meilisearch instance is low risk.
+
+**Linkwarden.** Linkwarden has native Meilisearch support for full-text search over saved links,
+configured through its own environment variables (name and shape to be confirmed against
+Linkwarden's current documentation before wiring).
+
+**Strapi.** The official `strapi-plugin-meilisearch` indexes Strapi content types into
+Meilisearch. This is an optional plugin installed into the content management system itself, only
+if the operator wants it; it is proposed here, not assumed.
+
+**n8n.** No dedicated Cloudron wiring is needed. Use the community node `n8n-nodes-meilisearch`,
+or a plain HTTP Request node against this application's REST API with a scoped key, from any n8n
+workflow.
+
+## Backup, restore and update
+
+Cloudron backs up `/app/data` as a live copy while the application keeps running, and separately
+carries `/app/db`, the `persistentDirs` path, through every backup, clone, and restore. Because the
+Meilisearch data store lives on that `persistentDirs` path, it does not enter the ordinary
+`/app/data` file walk, so its constant background churn cannot abort or slow the backup of this
+application or, in principle, of any other application sharing the same backup run.
+
+The `backupCommand` script runs at backup time, asks the live server to take a snapshot over its
+own API, and is best effort: it always exits cleanly, whatever it manages to capture, because a
+backup step that could fail the whole platform backup for a transient condition is worse than one
+that quietly falls short and leaves a record of doing so. A clone starts with an empty
+`persistentDirs` path by Cloudron's own design, and an in-place restore preserves it; the
+entrypoint distinguishes both cases from a normal restart and imports the newest snapshot, or the
+newest dump if no snapshot exists, before Meilisearch opens for traffic. A rollback restore, where
+an older `/app/data` (and therefore an older snapshot) is restored onto a rig that still has the
+newer live data store from before the rollback, is handled the same way: the newer store is moved
+aside and the older snapshot is imported, because a Meilisearch binary refuses to open a data store
+newer than itself.
+
+Updating rebuilds the image against a newer upstream release. Cloudron takes an automatic backup
+before an `--image` update, which is the safety net for the in-place migration the entrypoint runs
+(`--upgrade-db`) when the installed data store is older than the new binary. This project has not
+yet exercised the ladder that proves this end to end; see `docs/PACKAGING-NOTES.md` for what is
+verified versus assumed at the current stage, and `docs/decisions/` for the full reasoning behind
+each of these choices.
+
+## Documentation
+
+- `docs/decisions/` carries the numbered architecture decision records behind this package.
+- `docs/PACKAGING-NOTES.md` is the anonymised, verified-versus-assumed log for this package.
+- `docs/FOR-CLOUDRON.md` carries platform observations offered back to the Cloudron team.
+- `docs/FOR-UPSTREAM.md` carries packaging observations offered back to the Meilisearch team.
+- `docs/DEBUGGING.md` is the runbook, including the gate evidence tables once they exist.
+- `AGENTS.md` is the working contract for anyone, human or AI agent, who edits this repository.
+
+## Licence
+
+Meilisearch is dual licensed, `SPDX-License-Identifier: MIT AND BUSL-1.1`. The core engine,
+including single-node self-hosting with local snapshots and dumps, is MIT licensed. A smaller
+enterprise edition subset, covering features such as sharding and remote snapshot storage, is
+licensed under the Business Source License 1.1 and requires a commercial agreement with Meilisearch
+for production use. This package configures and runs only the MIT-licensed community engine; it
+enables no enterprise edition feature. The package `LICENSE` file mirrors the exact upstream dual
+licence, alongside the upstream `LICENSE-MIT` and `LICENSE-EE` texts it points to, unmodified. The
+packaging work in this repository (the Dockerfile, the entrypoint, the manifest, and the
+documentation) is the copyright of its author.

@@ -1,0 +1,24 @@
+# Local working notes and the private foundation prompt. Never tracked in the public package.
+phase-notes/
+*foundation*.md
+
+# Maintainer-private anonymity list (used by test/secret-scan.sh), never published.
+.anonymize-list
+
+# Secrets and local credentials.
+.env
+.env.*
+*token*.txt
+*.token
+.secrets/
+.env*
+*.key
+.cloudron.json
+
+# Editor and harness local state.
+.claude/
+
+# Local build, test and scratch artefacts.
+*.log
+scratchpad/
+tmp/

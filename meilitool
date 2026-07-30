@@ -1,0 +1,23 @@
+#!/bin/bash
+#
+# Wrapper for the offline maintenance tool `meilitool`.
+#
+# Upstream does not publish meilitool as a GitHub release asset, so the packaged copy is taken
+# from the official Alpine image. That build is musl-linked and dynamic (not static, contrary to
+# the original assumption in ADR 0001), so it cannot run directly on the glibc userland of
+# cloudron/base. The musl loader and libgcc that it needs travel with it in /app/code/musl, and
+# this wrapper invokes the loader explicitly with that directory as the only library path. No
+# musl library is installed into a system path, so nothing from the base image can pick one up.
+#
+# Usage is exactly upstream's, for example:
+#
+#   /app/code/meilitool --help
+#   /app/code/meilitool export-dump --db-path /app/db/data.ms --dump-dir /app/data/dumps
+#
+# The server must be stopped before using any subcommand that opens the database for writing.
+
+set -euo pipefail
+
+exec /app/code/musl/ld-musl-x86_64.so.1 \
+  --library-path /app/code/musl \
+  /app/code/meilitool.bin "$@"

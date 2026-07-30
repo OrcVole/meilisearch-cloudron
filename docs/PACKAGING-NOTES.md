@@ -4,6 +4,86 @@ Anonymised. Box-specific detail lives in the maintainer's local notes, not here.
 
 ---
 
+## 2026-07-30: Phases 2 to 4, Dockerfile, entrypoint, backup script, local smoke test
+
+The image now exists and was exercised locally with rootless podman against throwaway data
+directories. Everything in the "verified" list below was observed on a running container built
+from this repository; everything in the "still assumed" list was not, and a local pass is not a
+platform pass.
+
+**Verified locally (one image, id `a9752b2e302f`, 2026-07-30):**
+
+- The official 1.51.0 release binary for x86_64 resolves cleanly on `cloudron/base:5.0.0`. Its
+  highest required symbol version is `GLIBC_2.35` against the base's 2.39. The build-time gate
+  runs `file`, `ldd`, a grep for `not found`, and `--version` on both binaries, and passes. The
+  musl fallback for the server binary was not needed.
+- The build fails on a bad checksum. Building with a deliberately wrong `sha256` argument stops at
+  `sha256sum -c` with `1 computed checksum did NOT match` and exit 1, rather than proceeding.
+- Upstream publishes **no** checksum file with the release, and **no** `meilitool` release asset.
+  The pinned hash comes from the `digest` field of the GitHub releases API asset object, confirmed
+  against a locally computed `sha256sum`. `meilitool` comes from the official image, as ADR 0001's
+  alternative path anticipated.
+- `meilitool` is musl **dynamic**, not static. This corrects an assumption in ADR 0001; see that
+  record's History section for how it is packaged.
+- `GET /health` answers 200 with no credential while a master key is set. `GET /version` and
+  `POST /indexes/*/search` answer 401 without the key, with the documented
+  `missing_authorization_header` body, and 200 with it.
+- Production mode really does remove the search preview interface. `GET /` returns
+  `{"status":"Meilisearch is running"}` as `application/json`, with no HTML anywhere in the
+  response.
+- The master key is generated once at mode 0600 owned by `cloudron`, is not regenerated on a
+  second boot, and a store present without a key file stops the boot with a labelled error rather
+  than generating a replacement.
+- The boot decision tree works for the clone leg (empty persistent directory plus a snapshot in
+  `/app/data`) and the rollback leg (marker newer than the binary: store quarantined, snapshot
+  imported, documents intact).
+- `backupCommand` conditions were reproduced faithfully: a separate container, entrypoint
+  overridden, read-only root filesystem, `/tmp` and `/run` as tmpfs, the same mounts, a shared
+  network, and zero `CLOUDRON_*` variables (counted, not assumed). It exits 0 with the app up, with
+  the app stopped, and with an entirely empty `/app/data`, recording the outcome each time.
+- The cgroup memory computation is correct. Under a 1 GiB container limit the process received
+  `MEILI_MAX_INDEXING_MEMORY=357913941`, exactly the limit divided by three, and the fallback to
+  host `MemTotal` fires correctly when no limit is set.
+- The `/app/data/env` override file works, and the package's structural variables win over it.
+  Tested with a decoy file setting `MEILI_ENV=development` and `MEILI_DB_PATH=/tmp/hijacked`
+  alongside legitimate settings: the legitimate settings took effect, both structural ones did not.
+- `POST /snapshots` always writes the same file, `data.ms.snapshot`, overwriting it in place at
+  mode 0444.
+
+**Two defects the smoke test found, both now fixed, both worth remembering:**
+
+- **Meilisearch ignores `SIGTERM` when it is PID 1.** It installs no handler, and the kernel gives
+  PID 1 no default signal dispositions. Measured: a stop request was ignored for a full 60 second
+  grace period and the container was then `SIGKILL`ed. The entrypoint now ends with
+  `exec /usr/bin/tini -- gosu ...`, as upstream's own image does; the same stop then completed in
+  187ms. This is a deviation from the literal last line in ADR 0002, recorded there. It very
+  probably applies to other packages on this estate whose application does not install its own
+  handlers, and the only symptom is slow stops.
+- **The supervised upgrade phase reintroduced the same problem, worse.** During that phase
+  `start.sh` is PID 1, so a stop arriving mid-migration was ignored until the platform `SIGKILL`ed
+  a database in the middle of an upgrade. `start.sh` now traps `TERM` and `INT` and forwards them.
+  Verified: the stop completes in about three seconds, the version marker is correctly left
+  unchanged rather than claiming a version that never finished, and the next boot resumes the leg.
+
+**Still assumed, not yet verified:**
+
+- That the platform's health check tolerates the leg 3 boot window, which is about 51 seconds
+  locally even with nothing to migrate, and includes a brief moment when the port is free between
+  the supervised process stopping and the final start. Reasoned, not measured against Cloudron's
+  checker.
+- That a genuine format migration behaves as leg 3 assumes. Only one version was available
+  locally, so the test was an artificially old marker against a current store. Observed honestly:
+  when no upgrade is needed, Meilisearch enqueues **no** `upgradeDatabase` task at all, so the
+  script waits a grace period and concludes the store was current. A real migration is the update
+  drill's job.
+- Every `--import-dump` branch. No dump was created in this round, so only the snapshot branches of
+  legs 1, 3 and 4 ran.
+- That a snapshot completes while a bulk index is churning, and within the ten minute poll timeout.
+- That 2 GB and the divide-by-three fraction are right. Memory was verified as a computation, never
+  under load.
+
+---
+
 ## 2026-07-30: Phase 1, repository scaffold
 
 The repository was created and populated with the manifest, licence, documentation, and the six

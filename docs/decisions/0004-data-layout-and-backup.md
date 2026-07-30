@@ -52,3 +52,32 @@ dedicated restore script also existed.
   poll loop, the retention pruning, and the best-effort exit behaviour are all to be written and
   proven, not assumed, once `backup-snapshot.sh` exists and Gate 3 runs against a real churning
   store.
+
+## History
+
+**2026-07-30, backup script phase.** Written and proven locally, short of a real box.
+
+`backup-snapshot.sh` was exercised the way the platform runs it: a second container from the same
+image, entrypoint overridden to the script, read-only root filesystem, `/tmp` and `/run` as
+tmpfs, the same `/app/data` and `/app/db` mounts, on a shared container network, and with zero
+`CLOUDRON_*` variables in its environment (counted, not assumed). Results:
+
+- With the application up: exit 0, snapshot task succeeded, `data.ms.snapshot` rewritten in the
+  mounted snapshot directory, and one line appended to `/app/data/.last-backup.log`.
+- With the application stopped: exit 0 in four seconds, recorded as `skipped` with the reason. The
+  ten minute poll timeout is never reached, because an unreachable instance is detected by a short
+  health probe before any snapshot is requested.
+- With an empty `/app/data` and no endpoint file at all: exit 0, recorded as `failed` with the
+  reason. This is the state a backup would find if it ran before the application had ever booted.
+
+The status log rotates at 100 lines. Retention pruning runs in the backup script as well as at
+boot, so the tree the platform is about to walk carries the newest artefacts only.
+
+One correction to the expectation recorded above: `POST /snapshots` always writes the same file
+name, `data.ms.snapshot`, overwriting it in place at mode 0444. "Retain only the newest snapshot"
+is therefore what Meilisearch does by itself; the retention code is kept for the dump directory
+and for defence against a future naming change.
+
+The endpoint file works as designed and is the only reason the temporary container can find the
+application. `hostname -I` was filtered for the first IPv4 rather than the first field, because it
+can lead with an IPv6 address.

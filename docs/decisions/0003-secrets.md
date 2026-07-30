@@ -39,3 +39,24 @@ the entrypoint exists.
 - This decision is unexercised at the scaffold phase: the generation step, the idempotency check,
   the stop condition, and the mode and ownership re-assertion on every boot are all to be written
   and proven, not assumed, once `start.sh` exists.
+
+## History
+
+**2026-07-30, entrypoint phase.** Implemented and proven locally.
+
+- First run generates the key with `openssl rand -hex 32` into `/app/data/master-key`; observed
+  mode `600`, owner `cloudron:cloudron`, 64 hexadecimal characters.
+- A second boot over the same data directory logs `existing key found` and does not regenerate.
+- The stop condition works: with `/app/db/data.ms` present and `/app/data/master-key` deliberately
+  removed, the entrypoint exits 1 with a labelled `FATAL` message naming both paths and the
+  remedy, and neither generates a key nor touches the store.
+- Mode and ownership are re-asserted on every boot before anything else touches the data
+  directory, as this record requires.
+- The optional `/app/data/env` override file is implemented and its supported variables are
+  documented in the README, in the header comment of `start.sh`, and as a table in both. Proven
+  with a decoy test: an override file setting `MEILI_ENV=development` and
+  `MEILI_DB_PATH=/tmp/hijacked` alongside legitimate settings had its legitimate settings honoured
+  (`MEILI_LOG_LEVEL`, `MEILI_SCHEDULE_SNAPSHOT`, `MEILI_MAX_INDEXING_MEMORY`,
+  `MEILI_EXPERIMENTAL_ENABLE_METRICS`, the last confirmed by `/metrics` answering 200) while both
+  structural variables were overwritten by the package, leaving the instance in production mode
+  with its store on `/app/db`.

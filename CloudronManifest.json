@@ -8,6 +8,7 @@
   "icon": "file://logo.png",
   "version": "0.1.0",
   "upstreamVersion": "1.51.0",
+  "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:13726db11bd9545985ae5e98f6efb9ada660bcdd87958d827e085328389e842e",
   "healthCheckPath": "/health",
   "httpPort": 7700,
   "addons": {

@@ -1,0 +1,55 @@
+{
+    "stable": true,
+    "versions": {
+        "1.0.0": {
+            "creationDate": "2026-07-31T12:50:35.000Z",
+            "manifest": {
+                "addons": {
+                    "localstorage": {}
+                },
+                "author": "OrcVole",
+                "backupCommand": "/app/code/backup-snapshot.sh",
+                "changelog": "- Initial release. Packages Meilisearch 1.51.0 on cloudron/base:5.0.0, with the upstream release\n  binary and meilitool pinned by sha256 and left unmodified.\n- Headless search API in production mode: no dashboard, no single sign-on, no proxy authentication.\n  GET /health is the one route that stays open, which is what Cloudron's health check uses; every\n  other route requires the master key or a key minted from it.\n- The master key is generated once on first start, stored at /app/data/master-key, and never\n  regenerated, because every key Meilisearch issues afterwards is derived from it.\n- Database-class backup design: the Meilisearch data store lives on a persistentDirs path\n  (/app/db), out of the ordinary backup file walk, while a backupCommand asks the live instance\n  over its own API for a consistent snapshot into /app/data. Backup while idle, backup under heavy\n  indexing churn, in-place restore, clone, rollback restore, and dump import are all exercised.\n- The entrypoint distinguishes a fresh install, a clone, an in-place restore, a rollback restore\n  and a version-mismatched store, and imports the newest snapshot or dump, or runs a supervised\n  --upgrade-db migration, as appropriate.\n- MEILI_MAX_INDEXING_MEMORY is computed from the cgroup limit on every boot, because Meilisearch\n  otherwise sizes its indexing buffers from host-visible RAM rather than the container limit.\n- memoryLimit is 4 GB, set from a measured anonymous-memory peak while indexing one million\n  documents, not from a guess.\n- Analytics are disabled unconditionally. Operator overrides live in /app/data/env.\n",
+                "checklist": {
+                    "masterkey": {
+                        "message": "Get your master key: open a Terminal for this app (the `>_` button) and run `cat /app/data/master-key`. Every route except GET /health requires it, or a key minted from it via POST /keys. See POSTINSTALL.md."
+                    }
+                },
+                "contactEmail": "Most+github@OrcadianVole.com",
+                "description": "Meilisearch is an open source, typo-tolerant search engine written in Rust. It indexes your\ndocuments and serves fast, relevant full-text search, filtering, and sorting over a simple REST\nAPI, which makes it a building block for application search, site search, and chat or knowledge\nbase search, without the operational weight of a larger search platform.\n\nThis package runs Meilisearch on Cloudron as a headless search API, always in production mode:\n\n- No dashboard, no single sign-on, and no interactive login screen sit in front of the API,\n  because the application exists to serve programmatic clients, and a login wall would break every\n  one of them.\n- `GET /health` stays open with no credential, which is what the platform uses to judge whether\n  the application is running. Every other route requires a master key, generated on first launch,\n  or a scoped key minted from it.\n- The Meilisearch data store is treated as the database it is: it lives on a Cloudron\n  `persistentDirs` path so its constant background churn stays clear of the ordinary backup file\n  walk, while a snapshot taken through the application's own API rides the regular backup, and is\n  imported back automatically on a clone or a restore.\n\nThis is a community package. It tracks upstream Meilisearch releases and keeps the upstream binary\nunmodified. Meilisearch and the Meilisearch name and logo are trademarks of their respective owner.\nThis package is community-maintained and is not affiliated with or endorsed by the Meilisearch\nproject.\n\nMeilisearch itself is dual licensed (MIT for the core engine, Business Source License 1.1 for a\nsmaller enterprise edition subset). This package configures and runs only the MIT-licensed\ncommunity engine and enables no enterprise edition feature.\n",
+                "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:13726db11bd9545985ae5e98f6efb9ada660bcdd87958d827e085328389e842e",
+                "documentationUrl": "https://github.com/OrcVole/meilisearch-cloudron",
+                "healthCheckPath": "/health",
+                "httpPort": 7700,
+                "icon": "file://logo.png",
+                "iconUrl": "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/logo.png",
+                "id": "io.github.orcvole.meilisearch",
+                "manifestVersion": 2,
+                "mediaLinks": [
+                    "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/screenshots/api-search.png",
+                    "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/screenshots/install-community-app.png"
+                ],
+                "memoryLimit": 4294967296,
+                "minBoxVersion": "9.1.0",
+                "packagerName": "OrcVole",
+                "packagerUrl": "https://github.com/OrcVole/meilisearch-cloudron",
+                "persistentDirs": [
+                    "/app/db"
+                ],
+                "postInstallMessage": "### Meilisearch is running and ready\n\nNo setup wizard. Get your master key below, then point your apps or your own code at Meilisearch\nwhenever you want.\n\n**Get your master key.** Open this app's Terminal (the `>_` button above) and run\n`cat /app/data/master-key`. Send it as an `Authorization: Bearer <key>` header on every request.\n\n**One route is public.** `GET /health` answers with no credential; it is what Cloudron itself\nchecks. Every other route, including `GET /version`, requires the master key or a key minted from\nit.\n\n**Mint a scoped key for each consumer**, rather than handing out the master key itself, with\n`POST /keys`; see the README for a worked example. Revoke a scoped key at any time without\ndisturbing any other consumer.\n\n**Test from your own computer:**\n\n```\ncurl $CLOUDRON-APP-ORIGIN/health\ncurl $CLOUDRON-APP-ORIGIN/indexes -H \"Authorization: Bearer PASTE-MASTER-KEY-HERE\"\n```\n\n**Good to know.** The master key is generated once and never regenerated automatically: every key\nMeilisearch issues afterwards is derived from it, so replacing it would silently invalidate every\nkey a consumer already holds. The full topology, the backup and restore design, and the wiring\nrecipes for LibreChat, Linkwarden, Strapi, and n8n are in the README and `docs/PACKAGING-NOTES.md`.\n",
+                "tagline": "Lightning-fast, typo-tolerant search API for your own apps and data",
+                "tags": [
+                    "search",
+                    "api",
+                    "developer"
+                ],
+                "title": "Meilisearch",
+                "upstreamVersion": "1.51.0",
+                "version": "1.0.0",
+                "website": "https://github.com/OrcVole/meilisearch-cloudron"
+            },
+            "publishState": "published",
+            "ts": 1785502235000
+        }
+    }
+}

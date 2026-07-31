@@ -6,7 +6,8 @@
   "description": "file://DESCRIPTION.md",
   "changelog": "file://CHANGELOG.md",
   "icon": "file://logo.png",
-  "version": "0.1.0",
+  "iconUrl": "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/logo.png",
+  "version": "1.0.0",
   "upstreamVersion": "1.51.0",
   "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:13726db11bd9545985ae5e98f6efb9ada660bcdd87958d827e085328389e842e",
   "healthCheckPath": "/health",
@@ -29,6 +30,10 @@
     "search",
     "api",
     "developer"
+  ],
+  "mediaLinks": [
+    "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/screenshots/api-search.png",
+    "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/screenshots/install-community-app.png"
   ],
   "website": "https://github.com/OrcVole/meilisearch-cloudron",
   "documentationUrl": "https://github.com/OrcVole/meilisearch-cloudron",

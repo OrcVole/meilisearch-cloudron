@@ -4,10 +4,10 @@ A runbook for diagnosing this package on Cloudron. It is written so that an agen
 repository and the logs can find and fix a failure. When you fix a new failure, add it to "Known
 failures" with the symptom, the cause, and the fix.
 
-Gates 0, 1 and 2 have run on a real box against the shipping digest and their tables below carry
-real evidence. Gates 3 and 4 have not, apart from two rows settled early. Do not fill a gate row
-with anything that was not actually observed on a running box; local findings go in "Invariants
-proven locally" instead.
+All five gates have now run on a real box against the shipping digest, and every table below carries
+real evidence. Gates 0 to 3 PASS; Gate 4 FAILS on sizing and recommends a larger `memoryLimit`. Do
+not fill a gate row with anything that was not actually observed on a running box; local findings go
+in "Invariants proven locally" instead.
 
 ## State on disk (where to look first)
 
@@ -184,10 +184,98 @@ workstation against the test install's public hostname. No LibreChat instance wa
 The keyed search path is proven end to end: every call above carried the master key, the way
 LibreChat carries `MEILI_MASTER_KEY`, and every one succeeded through the public hostname.
 
-### Gate 3: update and restore
+### Gate 3: update and restore. PASS
 
-Not run. One Gate 3 precondition was settled early, because it was cheap and it decides whether
-the leg 3 design is safe on a real platform at all.
+Run 2026-07-31 against the shipping digest, on a throwaway test install carrying the Gate 1 and
+Gate 2 fixtures plus a one-million-document corpus. Five legs, all passing. The clone was torn
+down afterwards.
+
+**The corpus, because every number below depends on it.** Deterministically generated (seed
+`20260731`), not downloaded: 1 000 000 documents in 50 NDJSON batches of 20 000, 401 705 492 bytes,
+fields `id`/`title` (5 words)/`body` (28 words)/`genre` (8 values)/`author` (20 000
+values)/`year`/`rating`, over a synthetic 200 000-token Zipf vocabulary, with `genre`, `author` and
+`year` filterable and `rating`/`year` sortable. A large vocabulary makes the corpus harder to index
+than real prose of the same size, which is the right direction for a sizing test. It produced a
+**4 590 416 518-byte store, 11.4× the raw input.**
+
+#### Leg 1, backup while idle
+
+| Check | Expected | Evidence |
+|---|---|---|
+| The platform runs the `backupCommand` | A status line appears | `/app/data/.last-backup.log` did not exist beforehand; afterwards it held `2026-07-31T00:45:43Z succeeded snapshot task 17 completed`. That file is the only channel out of the temp container, whose stdout is discarded |
+| The snapshot task ran on the live app | `snapshotCreation succeeded` | Task 17, `succeeded`, `duration PT0.119526448S`, `enqueuedAt 00:45:38.504Z`. The instance had never created a snapshot before this run |
+| An artefact lands inside the backed-up tree | file in `/app/data/snapshots` | `data.ms.snapshot`, 22 884 bytes, `-r--r--r-- cloudron:cloudron`, sha256 `29778f66f7f4…` |
+| Cost | Small | `cloudron backup create --app …` took **28.5 s** end to end (00:45:27Z → 00:45:55Z) |
+
+#### Leg 2, backup under churn (the leg that justifies `persistentDirs`)
+
+Backup issued at 00:51:56Z with **16 tasks enqueued** and `"isIndexing":true`.
+
+| Check | Expected | Evidence |
+|---|---|---|
+| The backup run completes and does not error | clean run | `app <test install> backup finished. Took 314.553 seconds`, then `App is backed up`, exit 0. No syncer error |
+| The snapshot task succeeds inside the 600 s poll | `succeeded` | Task 50: enqueued 00:52:09.44Z, **started 00:52:25.33Z**, finished 00:56:26.94Z, `duration PT241.609397690S`. **241 s of the 600 s budget** |
+| The `backupCommand` records it | one line | `2026-07-31T00:56:28Z succeeded snapshot task 50 completed` |
+| The artefact is real | large file | 515 968 019 bytes, uploaded by the platform at 5–14 MB/s |
+| Indexing is not disturbed | zero failures | Zero failed tasks; the queue kept draining and reached 1 000 000 documents at 01:07:37Z; `/health` 200 at every probe throughout |
+| Nothing accepted before the snapshot point is lost | count decomposes exactly | The clone of this backup (leg 4) converged to **680 000** `corpus` documents = 260 000 committed at the consistency point + 420 000 carried as undrained task payloads inside the snapshot. The 320 000 absent are the batches accepted *after* 00:52:25Z |
+
+**Non-obvious and load-bearing: a Meilisearch snapshot carries the task queue with its undrained
+document payloads, so a restore resumes the indexing that was in flight.** A backup taken mid-bulk-
+index is complete, not merely consistent. The consistency point is when the snapshot *task starts*,
+not when the backup was requested (16 s apart here).
+
+#### Leg 3, in-place restore
+
+`cloudron restore --app <test install> --backup <churn backup>`, 01:24:08Z → 01:26:01Z,
+**1 m 53 s**, `App is restored`.
+
+| Invariant | Expected | Evidence |
+|---|---|---|
+| Master key byte-identical | same sha256 | `bed6e83442762f05…` before and after, unchanged since Gate 0 |
+| Master key mode and owner re-asserted | `600 cloudron:cloudron` | `600 cloudron:cloudron 65 /app/data/master-key` after the post-restore boot |
+| Restore does reset modes | it does | `data.ms.snapshot` came back `-rw-r--r--`; Meilisearch writes it `0444`. `.last-backup.log` came back `cloudron:cloudron` having been written `root:root` by the temp container, because `start.sh` does `chown -R` on every boot. The re-assertion is required, not defensive |
+| Every derived key still works | scoped key returns its hit | `gate1-alpha-only` returned `{"id":1,"title":"alpha secret"}` |
+| Data intact | counts exact | `alpha` 1, `beta` 1, `convos` 2, `messages` 3, `corpus` 1 000 000 |
+| The live store may be NEWER than the restored `/app/data` | `persistentDirs` preserved | Live `/app/db` still held 1 000 000 documents while the restored `/app/data` snapshot's consistency point held 260 000. Confirmed exactly |
+| Boot path | existing store, existing key | `leg : 2, store written by 1.51.0, matching this binary, normal start`; `master key: existing key found`; `marker : healthy` 3 s after `booting` |
+| Outage | platform window only | Independent 1-second poll: 200 until 01:24:18Z, one 502 at 01:24:19.2Z, refused until 01:25:54Z, 200 from 01:25:56.2Z. **97 s**, all container teardown and recreate |
+
+#### Leg 4, clone to a new location (empty `persistentDirs`)
+
+`cloudron clone --app <test install> --backup <churn backup> --location
+<clone location>`, 01:30:07Z → 01:32:51Z, **2 m 43 s**.
+
+| Check | Expected | Evidence |
+|---|---|---|
+| `persistentDirs` start EMPTY | leg 1, not leg 2 | `leg : 1, no store present, rebuilding from the newest artefact`; `version : 1.51.0 (marker was 'none')`. The same backup restored in place took leg 2, so both semantics are demonstrated from one artefact |
+| The boot tree rebuilds from `/app/data` | snapshot import | `import : newest snapshot /app/data/snapshots/data.ms.snapshot`; `exec : meilisearch --import-snapshot … --ignore-missing-snapshot` |
+| Import cost | fast | `booting` 01:32:31Z → `marker : healthy` 01:32:50Z: **19 s for a 516 MB snapshot** |
+| Documents searchable in the clone | hits | `q=liekou` with `filter=genre = drama` returned hits; `corpus` 680 000, `alpha` 1, `beta` 1, `convos` 2, `messages` 3 |
+| The master key travels in `/app/data` | scoped key works | `gate1-alpha-only`, minted on the original, returned its hit against the clone |
+| Torn down | gone | `App <clone location> successfully uninstalled`; one `meili` row in `cloudron list`; the hostname no longer answers |
+
+#### Leg 5, the dump path (previously unexercised code)
+
+Run on the clone. Dump created, then the snapshot and the whole store deleted so only the dump
+remained.
+
+| Check | Expected | Evidence |
+|---|---|---|
+| A dump can be created | `dumpCreation succeeded` | Task 54, `dumpUid 20260731-013801980`, `duration PT68.474096503S`, file **83 067 397 bytes for 680 015 documents** (a dump is documents and settings, not an index: an eighth of the snapshot's size) |
+| The boot tree falls through to the dump | `--import-dump` | `import : no snapshot found, newest dump /app/data/dumps/20260731-013801980.dump`; `exec : meilisearch --import-dump … --ignore-missing-dump` |
+| The documents return | counts and search | `corpus` 680 000 searchable with filter and sort; `alpha` 1, `beta` 1, `convos` 2, `messages` 3; `gate1-alpha-only` still returns its hit; rebuilt store 2 378 777 222 bytes |
+| **A dump import is a full re-index and can outrun the marker wait** | defect, see below | `exec` 01:41:51Z, healthy about 01:48:50Z: **roughly 7 minutes**. `start.sh` logged `WARNING: no healthy response within 300s; /app/db/.meili-version was left unchanged`, and the marker file was absent |
+| The missing marker self-heals | leg 3 no-op writes it | Next restart: `leg : 3, store present with no version marker, treating as possibly older` → `no upgradeDatabase task was enqueued` → marker back to `1.51.0`. Cost: one 26-second boot |
+
+**Open defect.** `MEILISEARCH_HEALTH_TIMEOUT` defaults to 300 s, which was sized against a normal
+boot and not against a dump import of an arbitrary corpus. The behaviour is fail-safe (it refuses
+to record a version it never saw become healthy), loud, and self-healing, and an operator can raise
+the timeout in `/app/data/env` without a rebuild — but the correct fix is to keep waiting while the
+server process is alive rather than run a fixed clock. Only a restore that has lost its snapshot
+reaches this path.
+
+#### The leg 3 health window, and the residual race
 
 **Does the platform's health checker tolerate the leg 3 window? Yes, comfortably.** Provoked on
 2026-07-31 by writing `1.50.0` into `/app/db/.meili-version` on a test install and restarting.
@@ -202,26 +290,133 @@ the leg 3 design is safe on a real platform at all.
 | The window is shorter on the box than locally | About 51s locally | **26 seconds** here: `booting` 00:29:27Z to `marker : healthy` 00:29:53Z, of which the no-task grace period was 23 seconds |
 | Data and credentials survive leg 3 | Unchanged | Index document counts identical before and after (`alpha` 1, `beta` 1, `convos` 2, `messages` 3); a scoped key minted before the restart still returns its hit; master key sha256 still `bed6e834...`; marker advanced to `1.51.0`; zero quarantine directories |
 
-The one residual risk, stated honestly: the port is free for under a second between the supervised
-process stopping and the final `exec`. The platform polls every 10 seconds, so a poll can land in
-that gap. It did not here, and a single miss would not be enough on its own, but that is the only
-part of the window that is not proven safe.
+The residual risk was that the port is free for under a second between the supervised process
+stopping and the final `exec`, against a platform poll every 10 seconds. That was sampled properly
+on 2026-07-31 and the section below records the result.
+
+**Result: five leg 3 cycles, zero hits, and the platform turns out to drop polls by itself
+anyway.**
+
+Detection method, which is the part worth reusing: a platform poll that lands while the port is
+free never reaches the application, so it leaves **no line at all** in the app log. It cannot be
+found by looking for a failure; it is found as a **gap in the otherwise exact 10-second
+`Mozilla (CloudronHealth)` cadence**. An external poller cannot do this job at all — a 1- or
+2-second poll cannot see a sub-second hole, and it is not the observer that can restart the
+container.
+
+| Cycle | Boot → healthy | Supervised stop | Poll before / after the stop | Lost polls, and where |
+|---|---|---|---|---|
+| A | 01:50:43 → 01:51:09 (26 s) | 01:51:06 | 01:51:00 **200** / 01:51:10 **200** | 1, at 01:50:40, during container teardown |
+| B | 01:59:04 → 01:59:30 (26 s) | 01:59:27 | 01:59:20 **200** / 01:59:30 **200** | 1 at 01:59:00 (teardown); 1 at 01:53:30 unrelated, see below |
+| C | 02:01:33 → 02:02:01 (28 s) | 02:01:57 | 02:01:50 **200** / 02:02:00 **200** | 3, 02:01:10–02:01:30, all teardown |
+| D | 02:05:58 → 02:06:27 (29 s) | 02:06:23 | 02:06:20 **200** / 02:06:30 **200** | 3, 02:05:40–02:06:00, all teardown |
+| E | 02:13:38 → 02:14:07 (29 s) | 02:14:03 | 02:14:00 **200** / 02:14:10 **200** | 3 at teardown; 1 at 02:14:20, **after** the app was already serving |
+
+**Zero of five cycles lost a poll to the supervised-stop window.** In every cycle the polls
+bracketing the stop, ten seconds apart, both returned 200, and no cycle produced an `unhealthy`
+line, an extra `booting` line, or a platform-initiated restart. A sixth restart (with the marker
+left alone) ran leg 2 in 3 seconds as a control and behaved identically.
+
+**The stronger safety result is the accidental one: the platform loses polls on a healthy app and
+nothing happens.** Two isolated single-poll losses were recorded with the application demonstrably
+up — at 01:53:30, where an independent 1-second external poll got 200 straight through it, and at
+02:14:20, where the app's own log shows it answering the polls at 02:14:10 and 02:14:30 either side.
+So a single missed poll is not diagnostic of anything, and the platform evidently does not act on
+one. That is a better argument for the leg 3 design than five clean cycles, because it does not
+depend on the sub-second window never being hit.
+
+Honest limit of this evidence: the gap is well under one second against a ten-second period, so a
+per-cycle hit probability below ten per cent is entirely consistent with five clean cycles. **This
+sampling does not prove the window can never be hit.** It proves the window was not hit in five
+tries, and that being hit once would not matter.
 
 | Check | Expected | Evidence |
 |---|---|---|
-| In-place restore | Data and master key survive | not yet run |
-| Clone restore (empty `persistentDirs`) | Snapshot or dump imports; data present | not yet run |
-| Rollback restore | Newer store moved aside; matching snapshot imported | not yet run |
-| Backup while indexing | Backup completes without corrupting the live index | not yet run |
+| The supervised-stop gap is lost-poll-free | no gap straddles the stop | 5 of 5 leg 3 cycles; polls either side of the stop all 200 |
+| Losing a poll is survivable anyway | no reaction | 2 isolated losses on a healthy serving app, no `unhealthy` line, no restart, no quarantine directory |
+| The window is stable at scale | ~26 s regardless of store size | 26–29 s across five cycles against a **4.6 GB** store, versus 26 s previously against a near-empty one. The 20-second no-task grace dominates it; the store size does not |
 
-### Gate 4: memory
+### Gate 4: memory. FAIL on sizing (no OOM kill)
 
-| Check | Expected | Evidence |
+Load: the same one-million-document corpus described under Gate 3, pushed as 50 requests of 20 000
+documents as fast as the link allowed, so a deep queue built up. Sampler ran inside the container
+every 3 seconds for 30 minutes (544 samples). cgroup v2 counters are readable from inside a Cloudron
+app container, so this gate needs no root shell on the host.
+
+`memory.peak` needed no reset: it stood at 38 547 456 before the load, barely above idle.
+
+| Counter | Idle | Loaded (peak) | At rest afterwards, 4.6 GB store |
+|---|---|---|---|
+| `memory.current` | 35 872 768 | **2 147 483 648**, exactly `memory.max` | 2 023 395 328 |
+| `memory.peak` | 38 547 456 | **2 148 102 144** = 100.03 % of the 2 GiB limit | — |
+| `memory.stat anon` | ~24 MB | **1 981 636 608** (1.85 GiB) | 608 825 344 |
+| `memory.stat file` (page cache of the mapped store) | ~10 MB | 1 971 851 264 | 1 365 684 224 |
+| `memory.stat slab` | ~4 MB | 35 337 368 | ~15 MB |
+| `meilisearch` RSS | ~26 MB | **2 102 996 KiB = 2.006 GiB** | 1 618 528 KiB |
+| `meilisearch` VSZ | ~10 TiB | **10 765 870 632 KiB = 10.02 TiB** | 10.02 TiB |
+| `memory.swap.current` | 0 | ≥ 661 164 032 observed | 581 488 640 |
+| `memory.events oom_kill` | 0 | **0** | 0 |
+| `memory.events max` (reclaim at limit) | 0 | **30 867** | — |
+| `pgmajfault` / `workingset_refault_anon` | 18 / 0 | 94 070 / 165 068 | — |
+| `memory.pressure full avg10` | 0 | 18.04 | ~0 |
+
+**Which figure matters, and why the other two mislead in opposite directions.**
+
+- **VSZ is meaningless.** 10.02 TiB is the LMDB map size the process reserves as address space. It
+  is not memory and implies nothing about memory. Any sizing argument using it is arithmetic on a
+  number with no physical referent. (Experiment X5, confirmed on the box.)
+- **`memory.current` at the cap is not danger.** It sat at the limit for 308 of 544 samples and
+  still sits at 94 per cent at rest with the app idle, because most of it is `file`: clean,
+  reclaimable page cache backing the memory-mapped store. Any store larger than `memoryLimit` will
+  do this. An operator reading the dashboard graph will think the app is broken; it is not.
+- **`memory.stat anon` decides survival.** Anonymous pages cannot be dropped, only swapped or
+  killed. Peak 1.85 GiB inside a 2 GiB cap, with at least 661 MB simultaneously in host swap:
+  **about 2.5 GiB of anonymous demand against a 2 GiB limit.**
+
+| Check | Expected | Result |
 |---|---|---|
-| cgroup memory at idle | Recorded | 2026-07-31, empty store, no traffic: `memory.current` 30 896 128 bytes, `memory.peak` 32 083 968 bytes, `memory.max` 2 147 483 648 bytes. That is 1.4 per cent of the limit |
-| cgroup RSS at idle | Recorded | not yet run |
-| cgroup RSS during bulk indexing of a realistic corpus | Recorded, with the corpus described | not yet run |
-| Swap usage during indexing | Recorded | not yet run |
+| `oom_kill` zero, app healthy, load verifiably landed | yes | **PASS**: 0 kills; `/health` 200 at every probe across 30 minutes; 1 000 000 documents indexed, zero failed tasks, searches with filter and sort return hits |
+| loaded `memory.peak` at or below 80 per cent of `memoryLimit` | ≤ 1.72 GiB | **FAIL**: 2 148 102 144, 100.03 per cent |
+| worst-case bound clears `memoryLimit` with real margin | several hundred MB spare | **FAIL**: anonymous demand alone was about 2.5 GiB |
+
+**Why it survived, and why that is not reassuring.** `memory.swap.max` inside the container is
+`max` and the host had swap available, so about 661 MB of anonymous memory was written out and
+faulted back 165 068 times rather than the OOM killer firing. **On a host without swap the same run
+had nowhere to put those pages.** `oom_kill == 0` is a much weaker pass signal than it looks.
+
+**Cause: auto-batching, not corpus size.** `GET /batches` during the run showed batch uid 24 with
+`"totalNbTasks":37` and `"receivedDocuments":740000`. Thirty-seven separate 20 000-document requests
+were merged by Meilisearch into a single 740 000-document unit of work; queue depth froze at 37 and
+`numberOfDocuments` froze at 260 000 for nine minutes, then jumped to 1 000 000 when that one batch
+committed. **Peak memory tracks the batch Meilisearch chooses, not the request the client sent nor
+the size of the corpus.**
+
+`MEILI_MAX_INDEXING_MEMORY` was 682 MiB throughout (`limit / 3`, logged every boot) while anonymous
+memory reached 1.85 GiB. **The divide-by-three is not a ceiling on the process.** It caps one
+indexer buffer, not per-thread structures across 12 cores, the merge phase, or the write buffers.
+
+**Controlled counterpart: the same batches, indexed one at a time.** After the load run, 20 000-
+document batches were sent to a fresh index with the client waiting for each
+`documentAdditionOrUpdate` task to reach `succeeded` before sending the next, so Meilisearch never
+had more than one to merge. Peak anonymous memory for a single 20 000-document batch settled around
+**1.07 GiB**, against **1.85 GiB** when 37 of the identical batches were merged into one. Serialising
+therefore removes roughly 45 per cent of the anonymous peak and is free, but it does **not** make a
+20 000-document batch cheap: one batch alone still wants over a gigabyte of anonymous memory, which
+is why 2 GiB is tight even for a well-behaved client. (Run against an already 5 GB store, so the
+page-cache component is at its most pessimistic; `memory.peak` is useless as a comparison here
+because merely opening a store that size fills the cgroup to the cap with reclaimable page cache
+within two minutes, with `anon` at 12 MB.)
+
+**Disk, recorded because nobody guesses it right:** 401 705 492 bytes of NDJSON became a
+4 590 416 518-byte store, **11.4×**. Plan disk at roughly twelve times the corpus.
+
+**Verdict and recommendation.** Gate 4 FAILS. It is a manifest-value failure, not a package defect:
+`memoryLimit` is a manifest field, so fixing it needs no rebuild and does not invalidate the digest
+gates 0 to 3 passed against. Recommended `memoryLimit` **4 GiB (`4294967296`)**: observed demand
+about 2.5 GiB, divided by 0.7, rounded up to the next sensible step. Keep the divide-by-three as the
+default split (it raises the indexer budget to 1365 MiB automatically) but stop describing it as a
+bound. **Gate 4 must be re-run at the new limit before the value is treated as proven.** Not changed
+unilaterally by the gate session; the operator decides.
 
 ## Known failures
 

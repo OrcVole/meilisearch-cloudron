@@ -182,9 +182,15 @@ above, thirty-seven separate twenty-thousand-document requests were merged into 
 So:
 
 > When bulk importing, wait for each `documentAdditionOrUpdate` task to reach `succeeded` before
-> sending the next batch. Poll `GET /tasks/<taskUid>`. Firing all your batches at once does not
-> make the import faster, and it multiplies the peak memory by however many batches happen to be
-> waiting.
+> sending the next batch. Poll `GET /tasks/<taskUid>`. Firing all your batches at once multiplies
+> the peak memory by however many batches happen to be waiting.
+
+Measured both ways on the same data: letting thirty-seven batches merge peaked at **1.85 GB** of
+anonymous memory, while sending them one at a time peaked at **1.31 GB** and used a fifth as much
+swap. Serialising is about three times slower per document, so it is a trade, not a free win — but
+it is the difference between an import that fits and one that does not. Note also that a single
+twenty-thousand-document batch still wants over 1.3 GB on its own, so client discipline alone does
+not make a 2 GB instance comfortable for a corpus this size.
 
 `MEILI_MAX_INDEXING_MEMORY` defaults to the memory limit divided by three. That is a sensible split
 between the indexer and everything else, but it is **not** a ceiling on the process: the measured

@@ -395,17 +395,28 @@ the size of the corpus.**
 memory reached 1.85 GiB. **The divide-by-three is not a ceiling on the process.** It caps one
 indexer buffer, not per-thread structures across 12 cores, the merge phase, or the write buffers.
 
-**Controlled counterpart: the same batches, indexed one at a time.** After the load run, 20 000-
-document batches were sent to a fresh index with the client waiting for each
+**Controlled counterpart: the same batches, indexed one at a time.** 200 000 documents were then
+sent as ten 20 000-document batches into a fresh index, with the client waiting for each
 `documentAdditionOrUpdate` task to reach `succeeded` before sending the next, so Meilisearch never
-had more than one to merge. Peak anonymous memory for a single 20 000-document batch settled around
-**1.07 GiB**, against **1.85 GiB** when 37 of the identical batches were merged into one. Serialising
-therefore removes roughly 45 per cent of the anonymous peak and is free, but it does **not** make a
-20 000-document batch cheap: one batch alone still wants over a gigabyte of anonymous memory, which
-is why 2 GiB is tight even for a well-behaved client. (Run against an already 5 GB store, so the
-page-cache component is at its most pessimistic; `memory.peak` is useless as a comparison here
-because merely opening a store that size fills the cgroup to the cap with reclaimable page cache
-within two minutes, with `anon` at 12 MB.)
+had more than one task to merge. Tasks 71 to 80, all `succeeded`, 08:14:46Z to 08:26:57Z.
+
+| | Deep queue (37 tasks merged into one 740 000-document batch) | Strictly serialised (one 20 000-document batch at a time) |
+|---|---|---|
+| peak `memory.stat anon` | **1 981 636 608** (1.85 GiB) | **1 409 392 640** (1.31 GiB) |
+| `memory.swap.current` | ≥ 661 164 032 | 135 430 144 |
+| `oom_kill` | 0 | 0 |
+| throughput | ~740 000 docs in ~15 min | 200 000 docs in 12 min |
+
+Serialising cuts the anonymous peak by about **29 per cent** and swap traffic by about **80 per
+cent**, and it costs throughput: roughly 3.6 s per thousand documents against 1.2 s when Meilisearch
+is allowed to merge. **But it does not make the batch cheap.** A single 20 000-document batch still
+wants over 1.3 GiB of anonymous memory, which is why 2 GiB is tight even for a perfectly
+well-behaved client, and why the recommendation below is to raise the limit rather than to rely on
+client discipline alone.
+
+(`memory.peak` is useless as a comparison for this run: merely opening a store this size fills the
+cgroup to the cap with reclaimable page cache within two minutes, with `anon` at 12 MB. `anon` is
+the only figure that distinguishes the two runs.)
 
 **Disk, recorded because nobody guesses it right:** 401 705 492 bytes of NDJSON became a
 4 590 416 518-byte store, **11.4×**. Plan disk at roughly twelve times the corpus.

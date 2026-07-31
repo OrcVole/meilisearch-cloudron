@@ -90,22 +90,110 @@ a scoped key at any time without disturbing any other consumer.
 
 ## Wiring to other applications
 
-Each wiring change below is a stub for now, expanded as this package moves past the scaffold
-stage. In every case, mint a scoped key for the consumer rather than sharing the master key, unless
-the consumer's own documentation states that it requires full access.
+Both worked examples below were carried out against a real Cloudron and are written from what the
+applications actually did, not from their documentation. Hostnames are `example.com` placeholders.
 
-**LibreChat.** LibreChat has native Meilisearch support for chat search, configured with
-`SEARCH=true`, `MEILI_HOST`, and `MEILI_MASTER_KEY` (or a scoped key, if LibreChat's current
-version supports one; verify against its own documentation before wiring). LibreChat rebuilds its
-search index from its primary database, so pointing it at a fresh Meilisearch instance is low risk.
+### The method, whatever the consumer is
 
-**Linkwarden.** Linkwarden has native Meilisearch support for full-text search over saved links,
-configured through its own environment variables (name and shape to be confirmed against
-Linkwarden's current documentation before wiring).
+1. **Find the consumer's real configuration mechanism before changing anything.** Read its
+   `/app/pkg/start.sh` and its supervisor configuration inside the container
+   (`cloudron exec --app <location>`). A Cloudron package usually assembles a runtime environment
+   file from several sources in a fixed order, and only one of those sources is yours to edit.
+   `cloudron env list --app <location>` tells you whether the dashboard environment mechanism is in
+   play as well. Do not assume the answer; two of the two applications wired this way turned out to
+   differ from what their upstream documentation implies.
+2. **Confirm the consumer has a recent backup** with `cloudron backup list --app <location>`. If it
+   does not, stop and fix that first.
+3. **Mint a dedicated scoped key** with `POST /keys`, restricted to the indexes that consumer owns
+   and to the actions it actually calls. Derive the action list from the consumer's source at its
+   installed version, not from its README. Then **prove the key before you touch the consumer**, by
+   driving the same call sequence against this application with `curl`, and by checking that a few
+   calls outside the scope really are refused with `403`.
+4. **Deliver the key without letting it reach a command line.** `cloudron push` a mode-0600
+   fragment file into `/app/data`, append it inside the container, and delete the fragment.
+   `cloudron exec` puts its command on the container's command line, where `ps` can read it.
+5. **Keep a byte-exact pre-image.** Copy the configuration file to
+   `<file>.pre-meili-wiring-<date>` inside the container before editing it, and record its sha256.
+   That, plus the key `uid` to revoke, is the whole rollback.
+6. **Expect a restart, and measure the outage yourself.** Poll the consumer's own URL once a second
+   from outside. `cloudron restart` returns well before the application is serving again; on the
+   two applications measured here the CLI returned 20 to 160 seconds early, and the real outage was
+   two to two and a half minutes.
 
-**Strapi.** The official `strapi-plugin-meilisearch` indexes Strapi content types into
-Meilisearch. This is an optional plugin installed into the content management system itself, only
-if the operator wants it; it is proposed here, not assumed.
+**Mind the "already indexed" flag.** Every consumer of this kind keeps a per-row marker in its own
+database saying "this row is in the search index". Point an established consumer at a *fresh*
+Meilisearch and those markers are all still set, so the consumer concludes there is nothing to do
+and the new instance stays permanently empty while search silently returns nothing. Before you
+declare a wiring successful, check the document count in `GET /stats` against the row count in the
+consumer's own database. If they disagree, find the consumer's documented resync mechanism and use
+that — never delete data to force it.
+
+### LibreChat
+
+**Check first whether it needs this application at all.** The Cloudron LibreChat package ships and
+supervises its *own* private Meilisearch on `localhost:7700`, with its store in
+`/app/data/meili_data` and a generated master key in `/app/data/secrets.env`. Chat search there is
+not broken for want of a search engine. Pointing it at this application is a deliberate
+consolidation — one backed-up, separately sized, shared instance instead of a private one — and not
+a repair.
+
+Configuration goes in **`/app/data/env`**, which the package appends last to the runtime
+environment file and then sources, so it overrides the package's own defaults:
+
+```
+MEILI_HOST="https://search.example.com"
+MEILI_MASTER_KEY="<the scoped key for this consumer>"
+```
+
+`SEARCH=true` is already set by the package. Tighten the file to mode `0600` afterwards; it now
+holds a credential, and the package re-owns `/app/data` on each boot but does not re-chmod it.
+
+A key scoped to indexes `["convos","messages"]` with actions `search`, `documents.add`,
+`documents.get`, `documents.delete`, `indexes.create`, `indexes.get`, `settings.get`,
+`settings.update`, `tasks.get` is sufficient — verified against LibreChat v0.8.1 with zero `401` or
+`403` in the engine's access log. `settings.get` is easy to miss and is required: LibreChat reads
+the index settings on every boot. Do not grant `stats.get`; it is not called, and a globally scoped
+`GET /stats` is refused for an index-scoped key in any case.
+
+Two behaviours that look like faults and are not. LibreChat registers its models twice, so it
+issues duplicate `POST /indexes` calls and leaves one **`failed` `indexCreation` task** per index
+in `GET /tasks` with `Index ... already exists`; it catches this itself and carries on. And
+LibreChat's resync marker is `_meiliIndex` on each conversation and message document — see the
+warning above.
+
+### Linkwarden
+
+Linkwarden has no bundled search engine, so this wiring genuinely turns full text search on. Its
+configuration also goes in **`/app/data/env`**, which the package appends to the runtime `.env`
+file the application reads:
+
+```
+MEILI_HOST="https://search.example.com"
+MEILI_MASTER_KEY="<the scoped key for this consumer>"
+```
+
+Linkwarden builds its client only when `MEILI_MASTER_KEY` is set, and otherwise falls back to
+database search silently, which is why the feature can appear simply missing.
+
+A key scoped to index `["links"]` with actions `search`, `documents.add`, `documents.delete`,
+`indexes.create`, `indexes.get`, `settings.update`, `tasks.get` is sufficient. It needs neither
+`documents.get` nor `settings.get`.
+
+After the restart, the worker process creates the `links` index, writes its filterable and sortable
+attributes, and then back-fills every existing link in batches of 50, marking each row's
+`indexVersion` in its own database as it goes. Measured rate: **one and a half to three links per
+second**, so plan for around half an hour per five thousand links; the application stays responsive
+throughout and the engine barely notices. Note that the web process accepts searches a few seconds
+before the worker has created the index, so the first half-minute after the restart can log
+`MeiliSearchApiError: Index 'links' not found` against real searches. That is a transient startup
+race and it clears itself; create the index ahead of the restart if the window has to be invisible.
+Linkwarden's resync marker is that `indexVersion` column.
+
+### Strapi
+
+The official `strapi-plugin-meilisearch` indexes Strapi content types into Meilisearch. This is an
+optional plugin installed into the content management system itself, only if the operator wants it;
+it is proposed here, not assumed.
 
 **n8n.** No dedicated Cloudron wiring is needed. Use the community node `n8n-nodes-meilisearch`,
 or a plain HTTP Request node against this application's REST API with a scoped key, from any n8n

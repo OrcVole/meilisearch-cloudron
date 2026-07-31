@@ -4,6 +4,102 @@ Anonymised. Box-specific detail lives in the maintainer's local notes, not here.
 
 ---
 
+## 2026-07-31: Gate 3 passed on all five legs; Gate 4 failed on sizing and wants 4 GB
+
+The whole point of this package is Gate 3, and it passed: a backup with the app idle, a backup
+taken in the middle of a bulk index, an in-place restore, a clone into empty `persistentDirs`, and
+the dump fallback that had never been executed by anything. Gate 4 measured a real load for the
+first time and the verdict is that the shipped 2 GB `memoryLimit` is too small for the workload the
+package invites. Full evidence tables are in `docs/DEBUGGING.md`.
+
+The load for both gates was one corpus, deliberately: 1 000 000 deterministically generated
+documents (seed `20260731`), 50 batches of 20 000, 401 705 492 bytes, over a synthetic
+200 000-token vocabulary. Synthetic rather than downloaded so it is reproducible at the next
+version bump; large-vocabulary so it is pessimistic rather than flattering.
+
+**Verified on the platform, having only been reasoned about before:**
+
+- **A `backupCommand` that asks the live app for a snapshot survives heavy churn.** The backup was
+  issued with 16 write tasks queued and the index actively building. The platform run finished
+  cleanly in 314.6 s, and the snapshot task took 241.6 s of the script's 600 s poll budget. The
+  design holds.
+- **The 600 s poll budget is sized against the application's queue, not against the snapshot.**
+  `POST /snapshots` returned in milliseconds; the task then waited 16 s to start and ran for 241 s,
+  because Meilisearch had merged 37 queued write tasks into one unit of work ahead of it. A
+  60-second timeout would have declared failure while the snapshot was being written correctly.
+  This generalises to any `backupCommand` that polls an application task.
+- **A Meilisearch snapshot carries the task queue, including undrained document payloads.** The
+  clone built from the churn backup converged to 680 000 documents: 260 000 committed at the
+  snapshot's consistency point plus 420 000 that were still queued and travelled inside the
+  artefact. A backup taken mid-import is complete, not merely consistent. This was not expected and
+  it is the most useful thing the gate taught.
+- **The snapshot's consistency point is when the snapshot task starts, not when the backup was
+  requested.** 16 seconds apart here; on a busy instance it could be minutes, and writes accepted in
+  that interval are not in the artefact.
+- **All three `persistentDirs` behaviours were demonstrated from one backup.** Restored in place,
+  the same artefact left a live store holding 1 000 000 documents untouched (leg 2 of the boot
+  tree). Cloned, it produced an empty store that rebuilt 680 000 from the snapshot (leg 1). One
+  artefact, two branches, no room to argue the backups differed.
+- **A restore really does reset file modes.** A file the application writes `0444`
+  (`data.ms.snapshot`) came back `0644`; a file the backup temp container writes `root:root` came
+  back `cloudron:cloudron` only because the entrypoint re-asserts ownership on every boot. The
+  master key came back `600 cloudron:cloudron` for the same reason. Re-asserting on every boot is
+  required behaviour, not caution.
+- **The dump fallback works, and it exposed a defect.** With the snapshot and the store both
+  deleted, the boot tree correctly chose `--import-dump` and brought 680 000 documents back. But a
+  dump import is a full re-index and took about seven minutes, while the marker writer gives up
+  after `MEILISEARCH_HEALTH_TIMEOUT` (300 s default) and logged
+  `WARNING: no healthy response within 300s; /app/db/.meili-version was left unchanged`. The marker
+  was absent. It is fail-safe (it refuses to record a version it never saw succeed), loud, and it
+  self-heals on the next boot through the no-op supervised upgrade — but the timeout should scale
+  with the process being alive rather than run a fixed clock. **Open defect, batched for the next
+  version bump so it costs one rebuild rather than two.**
+- **cgroup v2 counters are readable from inside the app container**, so Gate 4 does not require a
+  root shell on the host.
+
+**Measured for the first time, and it changes the manifest:**
+
+- **Virtual size is worthless for this application.** `ps` reports about **10 TB** of virtual size,
+  because the store is memory-mapped. Any sizing argument built on it is arithmetic on a number with
+  no physical referent.
+- **Total memory pinned at the cgroup limit is the normal resting state** for a store larger than
+  the limit, because the page cache backing the mapped store is charged to the container. It sat at
+  the cap for 308 of 544 samples during the load and at 94 per cent of the cap at rest afterwards,
+  with the application healthy throughout. This will generate support questions and the README now
+  pre-empts it.
+- **Anonymous memory is the figure that decides survival**, and it peaked at 1.85 GiB inside the
+  2 GiB cap with a further 660 MB pushed to host swap: about **2.5 GiB of demand against a 2 GiB
+  limit**. There was no OOM kill, but there were 30 867 reclaim-at-limit events, 165 068 anonymous
+  refaults and 18 per cent full memory pressure. **`oom_kill == 0` is a much weaker pass signal than
+  it looks** when the host has swap; on a swapless box the same run had nowhere to put those pages.
+- **`MEILI_MAX_INDEXING_MEMORY` (the limit divided by three, 682 MiB here) is not a ceiling on the
+  process.** It caps one indexer buffer, not per-thread structures, the merge phase or the write
+  buffers. The divide-by-three is a reasonable default split and should stay, but describing it as a
+  safety bound would have been wrong.
+- **Peak memory tracks the size of the batch Meilisearch chooses, not the size of the request or of
+  the corpus.** Thirty-seven 20 000-document requests were merged into one 740 000-document batch,
+  and that batch set the peak. Nothing in the client's view of the API hints that this happens. The
+  practical advice — wait for each task to reach `succeeded` before sending the next — is now the
+  most load-bearing sentence in the README's sizing section.
+- **Disk expands about twelvefold.** 401 MB of NDJSON became a 4.59 GB store.
+
+**Recommendation, for the operator to decide:** raise `memoryLimit` from 2 GiB to **4 GiB**
+(`4294967296`). Observed demand about 2.5 GiB, divided by 0.7, rounded up. This is a manifest field,
+so it needs no rebuild and does not invalidate the digest that gates 0 to 3 passed against — but
+Gate 4 would have to be re-run at the new limit, because raising the limit also raises the indexer
+budget. **Not changed unilaterally by the gate session.**
+
+**Still assumed, still owed:**
+
+- A real format migration. Leg 3 of the boot tree has now run many times, but always against a store
+  the same binary wrote, so `upgradeDatabase` has still never appeared as a task. This needs a
+  genuine upstream version bump and remains the largest unproven claim in the package.
+- The rollback leg on a real box (simulated locally only).
+- Quarantine growth, now sharper: a quarantined copy of a store this size would be 4.6 GB sitting on
+  the `persistentDirs` path for 30 days.
+
+---
+
 ## 2026-07-31: Gates 0, 1 and 2 passed on a real box, and the leg 3 health question answered
 
 The registry package was made public, the install went through, and the first three gates ran

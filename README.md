@@ -92,6 +92,8 @@ a scoped key at any time without disturbing any other consumer.
 
 Both worked examples below were carried out against a real Cloudron and are written from what the
 applications actually did, not from their documentation. Hostnames are `example.com` placeholders.
+Note that where these instructions say `/app/data/env`, they mean the **consumer's** file, inside
+the consumer's own container — not this package's operator settings file of the same name.
 
 ### The method, whatever the consumer is
 
@@ -116,9 +118,9 @@ applications actually did, not from their documentation. Hostnames are `example.
    `<file>.pre-meili-wiring-<date>` inside the container before editing it, and record its sha256.
    That, plus the key `uid` to revoke, is the whole rollback.
 6. **Expect a restart, and measure the outage yourself.** Poll the consumer's own URL once a second
-   from outside. `cloudron restart` returns well before the application is serving again; on the
-   two applications measured here the CLI returned 20 to 160 seconds early, and the real outage was
-   two to two and a half minutes.
+   from outside, and quote that figure to the operator rather than "a restart". Both applications
+   wired this way were unavailable for about two minutes, and both took a further minute after
+   that to stop timing out occasionally while their first pages rendered.
 
 **Mind the "already indexed" flag.** Every consumer of this kind keeps a per-row marker in its own
 database saying "this row is in the search index". Point an established consumer at a *fresh*
@@ -181,13 +183,13 @@ A key scoped to index `["links"]` with actions `search`, `documents.add`, `docum
 
 After the restart, the worker process creates the `links` index, writes its filterable and sortable
 attributes, and then back-fills every existing link in batches of 50, marking each row's
-`indexVersion` in its own database as it goes. Measured rate: **one and a half to three links per
-second**, so plan for around half an hour per five thousand links; the application stays responsive
-throughout and the engine barely notices. Note that the web process accepts searches a few seconds
-before the worker has created the index, so the first half-minute after the restart can log
-`MeiliSearchApiError: Index 'links' not found` against real searches. That is a transient startup
-race and it clears itself; create the index ahead of the restart if the window has to be invisible.
-Linkwarden's resync marker is that `indexVersion` column.
+`indexVersion` in its own database as it goes. Measured rate: **4 867 links in 49 minutes**, about
+one and a half per second, so plan for roughly an hour per five thousand links; the application
+stays responsive throughout and the engine barely notices. Note that the web process starts
+accepting searches a few seconds before the worker has created the index, so the first half-minute
+after the restart can log `MeiliSearchApiError: Index 'links' not found` against real searches.
+That is a transient startup race and it clears itself; create the index ahead of the restart if the
+window has to be invisible. Linkwarden's resync marker is that `indexVersion` column.
 
 ### Strapi
 
@@ -195,9 +197,10 @@ The official `strapi-plugin-meilisearch` indexes Strapi content types into Meili
 optional plugin installed into the content management system itself, only if the operator wants it;
 it is proposed here, not assumed.
 
-**n8n.** No dedicated Cloudron wiring is needed. Use the community node `n8n-nodes-meilisearch`,
-or a plain HTTP Request node against this application's REST API with a scoped key, from any n8n
-workflow.
+### n8n
+
+No dedicated Cloudron wiring is needed. Use the community node `n8n-nodes-meilisearch`, or a plain
+HTTP Request node against this application's REST API with a scoped key, from any n8n workflow.
 
 ## Operator settings: /app/data/env
 

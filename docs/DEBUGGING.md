@@ -108,7 +108,9 @@ would have produced a manifest whose `dockerImage` no client can ever pull.
 
 Gates 0, 1 and 2 ran on 2026-07-31 against the shipping digest
 `sha256:13726db11bd9...`, on a real Cloudron box, over the public HTTPS hostname rather than
-localhost, so the reverse proxy and TLS are part of what passed. Gates 3 and 4 are still unrun.
+localhost, so the reverse proxy and TLS are part of what passed. Gates 3 and 4 followed on the same
+digest, and gates 0 and 1 were then re-run from scratch on the production install; see
+[Production install](#production-install-gates-0-and-1-re-run-on-a-fresh-install-2026-07-31).
 
 ### Gate 0: install and first boot. PASS
 
@@ -515,9 +517,92 @@ limit with about 2 GiB of margin, and there is no case for going higher for a co
 shape. Keep the divide-by-three as the default split, which produced 1365 MiB automatically, but do
 not describe it as a bound: anonymous memory reached 1.82 GiB against it.
 
+## Production install: gates 0 and 1 re-run on a fresh install (2026-07-31)
+
+Gates 0 to 4 above all ran against a throwaway test install. Gates 0 and 1 were then re-run, freshly
+and in full, against a brand new install at the production location on the same digest
+`sha256:13726db11bd9...`. **Both PASS.** This section records only what the re-run adds; everything
+else reproduced the tables above exactly.
+
+Install: 71 seconds wall clock, one clean pass through the platform's pipeline, no repair and no
+retry. `Install state: installed`, `Run state: running`, platform `health: healthy`, and
+`cloudron status` reporting the same digest the manifest pins.
+
+### `memoryLimit` comes from the manifest, not from the image
+
+Gate 4's 4 GiB verdict was obtained by pushing `POST /api/v1/apps/<id>/configure/memory_limit` at an
+app that was already standing. That proves the container honours 4 GiB; it does not prove a fresh
+install is ever *given* 4 GiB, because the image at this digest was built while the manifest still
+said 2 GiB. A fresh install settles it.
+
+| Claim | Evidence |
+|---|---|
+| The platform holds the 4 GiB manifest | `GET /api/v1/apps/<id>`: `manifest.memoryLimit = 4294967296` |
+| No app-level override is involved | Same record: `memoryLimit = 0`, the platform's "inherit the manifest" value |
+| The container got it | `/sys/fs/cgroup/memory.max` = `4294967296` from inside |
+| The package recomputed the indexer budget by itself | First boot: `memory : limit 4096 MiB from cgroup v2 memory.max; indexing memory 1365 MiB (limit / 3, floor 256 MiB)`, and `MEILI_MAX_INDEXING_MEMORY=1431655765` in the server's environment, which is `4294967296 / 3` truncated, exactly |
+
+**Where the manifest actually comes from.** `cloudron install` does not read the manifest out of the
+image. The CLI walks up from the current working directory for a `CloudronManifest.json`, parses it,
+and uploads it with the install request. Because this package's manifest already carries
+`dockerImage`, the CLI prints `Using image ... (from app store)` and **ignores `--image` entirely**:
+the digest installed is the one pinned in the file. Run the install from anywhere else and you
+install a different manifest, or fail with `No CloudronManifest.json found`. A manifest-only change
+such as `memoryLimit` therefore reaches a new install with no rebuild, which is why gate 4's fix cost
+one integer and no new digest.
+
+### What the fresh gate 0 adds
+
+| Check | Evidence |
+|---|---|
+| Boot to health | `booting` → entrypoint `/health` 200 in **4 seconds**; `marker : healthy` on the next log line, **after** the 200, never before it |
+| No restart loop | Exactly **2** `booting` lines across the session: the install and one deliberate restart. No `unhealthy`, no `Exited`, no platform-initiated restart |
+| Health continuously green | **131** `Mozilla (CloudronHealth) GET /health` polls, **0** non-200, exact 10-second cadence across 22 minutes including the deliberate restart |
+| First run | `leg : 1, no store and no artefact to import, starting empty (fresh install)`; `master key: first run, generating`; `600 cloudron:cloudron 65 /app/data/master-key`; `/app/db/data.ms` and `/app/db/.meili-version` (`1.51.0`) created |
+| Secret idempotency | After `cloudron restart`: `leg : 2, store written by 1.51.0, matching this binary, normal start`, `master key: existing key found`, same file sha256, still `600 cloudron:cloudron`, `marker : healthy` 2 seconds after `booting` |
+| Idle memory at 4 GiB on an empty store | `memory.current` 30 576 640, `memory.peak` 31 965 184, `anon` 28 082 176, `file` 200 704, `slab` 1 291 448, `oom_kill` 0, server `VmRSS` 43 804 KiB. Idle still does not move with the limit |
+
+**A better way to prove `/app/data/.endpoint` is the address the platform routes to.** The earlier
+gate read the platform's own nginx configuration, which needs a root shell on the host. From inside
+the container, `ss -tn state established '( sport = :7700 )'` shows the live proxy connection:
+`Local Address 172.18.19.177:7700`, peer `172.18.0.1` — the docker bridge gateway, which is the
+reverse proxy. That is the exact string in `.endpoint`, and it observes the platform *using* the
+address rather than merely showing the container owns it. No host access required.
+
+### What the fresh gate 1 adds
+
+Identical results to the test install, on an instance whose keys had never been touched: `/health`
+200 unauthenticated; `/version`, `/indexes`, `/keys`, `/stats`, `/tasks` all 401 unkeyed and 200
+keyed; a wrong key 403; `GET /` `200 application/json` with body `{"status":"Meilisearch is
+running"}` and no HTML; the same four default keys with the same scopes; and a key scoped to one
+index returning its hit on that index and `403 The API key cannot acces the index ...` on another.
+The scoped key still returned its hit after the restart, which is the cheap proof that the master key
+was not regenerated. Zero failed tasks. The two fixture indexes and the scoped key were deleted
+afterwards, leaving the instance with zero indexes and the four default keys.
+
+### The `backupCommand` proven on the production install
+
+One per-app backup, 55 seconds, `App is backed up`, taken deliberately before the instance held
+anything worth losing.
+
+| Claim | Evidence |
+|---|---|
+| The `backupCommand` ran in the temp container | `/app/data/.last-backup.log` did not exist before the run and afterwards held exactly one line: `<ts> succeeded snapshot task 4 completed`, mode `-rw-r--r-- root root` — the temp container runs as root, and `start.sh` re-owns the file on the next boot |
+| The snapshot task ran on the live server | `GET /tasks?types=snapshotCreation` → uid 4, `succeeded`, `duration PT0.077489659S` |
+| An artefact landed in the backed-up tree | `/app/data/snapshots/data.ms.snapshot`, 5712 bytes, `-r--r--r-- cloudron:cloudron` |
+
 ## Known failures
 
 Format: Symptom / Cause / Fix.
+
+**`cat /proc/<pid>/environ` returns `Permission denied` even as root in an app terminal.** Cause:
+the file is `-r-------- cloudron cloudron`, and a Cloudron exec session does not carry
+`CAP_DAC_OVERRIDE`, so root's usual override does not apply. It is easy to misread this as "the
+environment is not observable" and fall back to inferring values from log lines. Fix: read it as the
+owning user, `su cloudron -s /bin/bash -c 'tr "\0" "\n" < /proc/<pid>/environ'` (or `gosu
+cloudron:cloudron`). Find the server pid by matching a cmdline of exactly `/app/code/meilisearch`
+with `PPid 1`; there is only ever one, and matching on `--db-path` finds nothing because the database
+path arrives through the environment, not the command line.
 
 **`cloudron install --image ...@sha256:...` fails with `Unable to pull image ... statusCode: 401`.**
 Cause: the container registry package is still private. The platform pulls the image with its own

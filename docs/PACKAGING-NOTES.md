@@ -4,6 +4,62 @@ Anonymised. Box-specific detail lives in the maintainer's local notes, not here.
 
 ---
 
+## 2026-07-31: Gates 0, 1 and 2 passed on a real box, and the leg 3 health question answered
+
+The registry package was made public, the install went through, and the first three gates ran
+against the shipping digest over the public hostname rather than localhost, so the reverse proxy
+and TLS are part of what passed. Full evidence tables are in `docs/DEBUGGING.md`.
+
+**Verified on the platform, having only been reasoned about before:**
+
+- **The health checker tolerates the leg 3 window, and the ADR 0005 deviation was the right
+  call.** This was the largest open question in the package. Leg 3 was provoked deliberately by
+  writing an older version into the marker and restarting. The platform's `Wait for health check`
+  step passed and the restart command returned `App restarted` a full 23 seconds before the
+  supervised upgrade finished, because the supervised process binds the port and answers `/health`
+  throughout. Every platform health poll in the window returned 200, including one that landed in
+  the same second as the supervised process being stopped. No platform-initiated restart occurred.
+  Had the supervised process been kept off the network, as the original record specified, the
+  health check would have failed for the whole migration and invited exactly the restart the leg
+  exists to prevent.
+- **The leg 3 window is shorter on the box than locally: 26 seconds, not 51.** Boot to healthy
+  marker, with a 23 second no-task grace period inside it. The 20 second grace is therefore most
+  of the cost, and it is affordable. There is no case for cutting it.
+- **The endpoint file picks the right address.** The container has exactly one global IPv4 and one
+  global IPv6, and `hostname -I` lists the IPv4 first here, but the filter still earns its place
+  because the ordering is not contractual. The address written, `172.18.16.57`, is the same one
+  the platform's own reverse proxy configuration names for this app, which is the strongest
+  available confirmation short of the backup container itself.
+- **Indexing memory follows the manifest, not the host.** `MEILI_MAX_INDEXING_MEMORY=715827882`
+  in the running process, exactly `memoryLimit / 3`, read from the container's cgroup. On a host
+  with far more RAM than the container limit, this is the upstream issue the package exists to
+  work around, and it is now proven on real hardware.
+- **Idle memory is tiny: 30.9 MB `memory.current` against a 2 GiB limit**, 1.4 per cent. Gate 4's
+  question is entirely about indexing load, not about the baseline.
+- **A first boot takes five seconds** from the entrypoint's first line to `/health` answering 200,
+  and the version marker is written one second after that, in the right order.
+- **Meilisearch 1.51.0 creates four default API keys, not two.** Search, Admin, Read-Only Admin
+  and Chat. The Chat key (`chatCompletions`, `search`) is new territory for anyone whose mental
+  model of Meilisearch stopped at the two documented keys, and it is worth knowing that a fresh
+  install hands out a key with an LLM-facing action on it by default.
+- **Key scoping is real and enforced per index.** A key minted for one index answers 403 on
+  another with a message naming the authorised index, and 403 on the key listing and on index
+  creation.
+- **A consumer's real call sequence works end to end.** LibreChat's Meilisearch integration was
+  read out of its source, not guessed, and driven with the client library at the version it pins:
+  health probe, `getRawInfo` miss, `createIndex` with a primary key, `waitForTask`,
+  `updateSettings` making `user` filterable, `addDocuments`, `search` with a `user` filter,
+  `getDocument`, `deleteDocument`. Every step succeeded, typo-tolerant search returned through the
+  filtered path, and no document belonging to another user appeared in any filtered result.
+
+**Corrections to earlier assumptions:** none. Every local smoke finding that this round could
+re-test held on the platform.
+
+**Still assumed:** everything in gates 3 and 4. Backup, restore, clone, a real format migration,
+dump import, and behaviour under a realistic indexing load.
+
+---
+
 ## 2026-07-31: Phase 5, shipping image built, scanned, pushed and pinned; gate ladder blocked
 
 The image that will ship now exists in the registry and its digest is pinned in the manifest. The
@@ -31,7 +87,8 @@ gate ladder did not start, because the platform cannot pull a private registry p
 **The blocker, stated plainly:** the platform pulls images with its own Docker daemon, and the
 `cloudron` CLI has no option for registry credentials. A private registry package therefore cannot
 be installed by digest at all; the install fails at the `Downloading image` step with
-`statusCode: 401` and leaves the app in `error (pending_install)`. This is the ordering cost of
+`statusCode: 401` and leaves the app in `error (pending_install)`. Resolved the same day by making
+the registry package public, which is route one below. This is the ordering cost of
 publishing the image before the ladder runs, and it is worth planning for: either the package is
 made public before the ladder (which means publishing an unproven artefact, though only its
 visibility, not any claim about it), or the host daemon is given credentials out of band. The

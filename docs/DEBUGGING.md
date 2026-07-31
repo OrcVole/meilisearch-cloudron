@@ -4,9 +4,9 @@ A runbook for diagnosing this package on Cloudron. It is written so that an agen
 repository and the logs can find and fix a failure. When you fix a new failure, add it to "Known
 failures" with the symptom, the cause, and the fix.
 
-The image, entrypoint, and backup script now exist and have been exercised locally. The gate
-tables below are still unrun, because a local container is not a Cloudron box. Do not fill a gate
-row with anything that was not actually observed on a running box; local findings go in "Invariants
+Gates 0, 1 and 2 have run on a real box against the shipping digest and their tables below carry
+real evidence. Gates 3 and 4 have not, apart from two rows settled early. Do not fill a gate row
+with anything that was not actually observed on a running box; local findings go in "Invariants
 proven locally" instead.
 
 ## State on disk (where to look first)
@@ -104,41 +104,108 @@ would have produced a manifest whose `dockerImage` no client can ever pull.
 
 ## Gate evidence tables
 
-Each gate below is unrun. When a gate runs for real, replace its row with the actual evidence: a
-status code, a hash, a count, a log line, and the date. An inference is not evidence.
+Gates 0, 1 and 2 ran on 2026-07-31 against the shipping digest
+`sha256:13726db11bd9...`, on a real Cloudron box, over the public HTTPS hostname rather than
+localhost, so the reverse proxy and TLS are part of what passed. Gates 3 and 4 are still unrun.
 
-Gates 0 to 4 are blocked as of 2026-07-31: the image is published to a private registry package,
-and the platform's own image pull has no credential path. See "Known failures" for the exact
-error and the ways out.
-
-### Gate 0: install and first boot
+### Gate 0: install and first boot. PASS
 
 | Check | Expected | Evidence |
 |---|---|---|
-| Image builds | Build completes, `ldd` gate passes | not yet run |
-| Container starts | Health check passes within the boot timeout | not yet run |
-| Master key generated | `/app/data/master-key` present, mode 0600 | not yet run |
+| Test what you ship | Installed digest equals the manifest `dockerImage` | Install output `Using image ...@sha256:13726db11bd9...`; `cloudron status` reports the same digest |
+| Container starts, no restart loop | One boot per deliberate operation, health green | Exactly three `==> [start] Meilisearch 1.51.0 booting` lines across install, a deliberate restart and a deliberate leg 3 restart. No `unhealthy`, no platform-initiated restart, no `Exited` in the log |
+| Boot is fast | Health well within the platform timeout | First boot `booting` at 00:07:02Z, `Server listening on 0.0.0.0:7700` at 00:07:06Z, first `/health` 200 at 00:07:07Z: **5 seconds**. The platform's own `Wait for health check` step passed on the first poll |
+| Health check satisfied continuously | Platform poller always 200 | `Mozilla (CloudronHealth)` `GET /health status_code=200` every 10 seconds without exception, from 00:07:20Z onward |
+| `healthCheckPath` open unauthenticated | 200 with no credential, from outside the box | `GET /health` over public HTTPS, no header: `http=200`, body `{"status":"available"}` |
+| Master key generated correctly | mode 0600, owner cloudron, 64 hex | `600 cloudron:cloudron 65 /app/data/master-key`, content 64 characters, file sha256 `bed6e834...` |
+| Master key idempotent across restart | Same hash, existing-key branch taken | After `cloudron restart`: `master key: existing key found at /app/data/master-key`, `leg: 2, store written by 1.51.0, matching this binary, normal start`, sha256 still `bed6e834...` |
+| Store created on the persistent path | `/app/db/data.ms` exists, owned cloudron | `drwxr-xr-x cloudron cloudron /app/db/data.ms` containing `VERSION` and `auth/` |
+| Endpoint file written with a reachable IPv4 | Address matches what the platform itself routes to | `/app/data/.endpoint` = `http://172.18.16.57:7700`, mode 0640 cloudron:cloudron. The container has exactly one global IPv4 (`eth0 172.18.16.57/16`) alongside one global IPv6, and the platform's own nginx config for this app names `"ip":"172.18.16.57"`. `curl $(cat .endpoint)/health` from inside returns 200 |
+| Version marker written only after health | Marker timestamp later than first health 200 | First health 200 at 00:07:07Z, `marker : healthy, /app/db/.meili-version now records 1.51.0` at 00:07:08Z; file content `1.51.0` |
+| Indexing memory from the manifest, not host RAM | `2147483648 / 3 = 715827882` | Boot log `limit 2048 MiB from cgroup v2 memory.max; indexing memory 682 MiB (limit / 3, floor 256 MiB)`; PID 1 environment carries `MEILI_MAX_INDEXING_MEMORY=715827882`; `/sys/fs/cgroup/memory.max` reads `2147483648` |
+| Process tree is as designed | tini as PID 1, server as the cloudron user | `1 0 root /usr/bin/tini -- gosu cloudron:cloudron /app/code/meilisearch`, `50 1 cloudron /app/code/meilisearch` |
+| Production mode forced | `Environment: "production"`, store path not overridable | Startup banner `Environment: "production"`, `Database path: "/app/db/data.ms"` |
 
-### Gate 1: auth
+Idle memory at rest, for Gate 4's baseline: `memory.current` 30 896 128 bytes, `memory.peak`
+32 083 968 bytes, against a 2 147 483 648 byte limit.
+
+### Gate 1: auth. PASS
+
+Every request below went over the public HTTPS hostname.
 
 | Check | Expected | Evidence |
 |---|---|---|
-| `GET /health` with no key | 200 | not yet run |
-| `GET /version` with no key | 401 (or documented equivalent) | not yet run |
-| Any data route with the master key | 200 | not yet run |
-| `POST /keys` mints a working scoped key | New key authenticates; original master key unaffected | not yet run |
+| `GET /health` with no key | 200 | `http=200`, `{"status":"available"}`, while a master key is set |
+| `GET /version`, `/indexes`, `/keys`, `/stats`, `/tasks` with no key | 401 | All five `http=401` with `"code":"missing_authorization_header"` |
+| The same five routes with the master key | 200 | All five `http=200`; `/version` reports `pkgVersion 1.51.0` |
+| Root path in production mode | JSON, no search preview UI | `GET /` `http=200`, `content-type: application/json`, body `{"status":"Meilisearch is running"}`, zero matches for `<html`, `<!doctype`, `<script`, `<body` |
+| Default keys exist | Search and Admin present with correct scopes | `GET /keys` `total: 4`: `Default Search API Key` (`actions:["search"]`), `Default Admin API Key` (`actions:["*"]`), `Default Read-Only Admin API Key` (`actions:["*.get","keys.get"]`), `Default Chat API Key` (`actions:["chatCompletions","search"]`), all `indexes:["*"]`, none expiring |
+| The default search key behaves to its scope | Search yes, write no, key listing no | Search on two indexes `http=200` with hits; `POST /indexes` `http=403 invalid_api_key`; `GET /keys` `http=403 invalid_api_key` |
+| A minted key scoped to one index cannot read another | 403 on the other index | `POST /keys` `http=201` for `{"actions":["search"],"indexes":["alpha"]}`; search on `alpha` `http=200` returning `["alpha secret"]`; search on `beta` `http=403` with `The API key cannot acces the index 'beta', authorized indexes are ["alpha"]`; `GET /indexes` and `POST /indexes` both `http=403` |
 
-### Gate 2: functional flows
+### Gate 2: functional flows. PASS
+
+Corpus: six documents with `title`, `overview`, `genre`, `year`, in an index `gate2` with
+`primaryKey: "id"`.
 
 | Check | Expected | Evidence |
 |---|---|---|
-| Index one document | Task succeeds | not yet run |
-| Search returns it | Document present in results | not yet run |
-| Filter narrows results | Correct subset returned | not yet run |
-| Delete removes it | Subsequent search excludes it | not yet run |
-| Integration gate (a throwaway consumer, for example LibreChat, against the test install) | End-to-end search succeeds | not yet run |
+| Create index | Task succeeds | `POST /indexes` `http=202`, task 4 `indexCreation succeeded` |
+| Update settings | Settings readback matches | `PATCH /indexes/gate2/settings` task 5 `succeeded`; readback shows `searchableAttributes ["title","overview"]`, `filterableAttributes ["genre","year"]`, `sortableAttributes ["year"]`, `minWordSizeForTypos {oneTypo:4,twoTypos:8}` |
+| Add documents, exact count | 6 in, 6 stored | Task 6 `succeeded`; `numberOfDocuments: 6`, `isIndexing: false`, `fieldDistribution` 6 for every one of the five fields |
+| Document round trip is byte identical | Same sha256 in and out | Document 1 as sent, sorted keys, sha256 `8def79e8...`; `GET /indexes/gate2/documents/1` sorted the same way, sha256 `8def79e8...`, `cmp` reports identical |
+| Search finds an exact term | Correct single hit | `q=vole` returns `["The Orkney Vole"]`, `estimatedTotalHits 1` |
+| Typo tolerance | Misspellings still match | `q=puffn` returns `["Puffin Colony"]`; `q=neolthic` returns `["Standing Stones"]` (matching the `overview` field, one typo in an eight-letter word) |
+| Filter narrows correctly | Exact subset | `filter=genre = history` returns `["Standing Stones","The Longship"]`, total 2; `filter=year > 1960 AND genre = drama` with `sort=year:desc` returns only `Selkie Song` (1999) |
+| Partial update | Only the named field changes | `PUT /indexes/gate2/documents` with `{"id":3,"genre":"noir"}` task 7 `succeeded`; document 3 readback keeps `title` and `year`, `genre` is now `noir`; `filter=genre = noir` returns `["Harbour Lights"]` |
+| Delete one document | Count drops by exactly one | `numberOfDocuments` 6 then 5, delta 1; `q=selkie` returns 0 hits |
+| Delete index | Index gone | Task 9 `succeeded`; `GET /indexes/gate2` `http=404 index_not_found` |
+| Integration leg, experiment X3 | A real consumer's call sequence returns search results | See the table below |
+
+**Integration leg (X3): LibreChat's own call sequence, driven from a throwaway client.** The
+sequence was read out of LibreChat's source rather than guessed, and driven with the same client
+library at the version LibreChat pins (`meilisearch@0.38.0`), from a scratch Node project on the
+workstation against the test install's public hostname. No LibreChat instance was touched.
+
+| Step, as LibreChat makes it | Evidence |
+|---|---|
+| `client.health()` (its `/api/search/enable` probe) | `{"status":"available"}` |
+| `index.getRawInfo()` on a first boot | `index_not_found`, the branch that triggers creation |
+| `client.createIndex('convos', {primaryKey:'conversationId'})` then `waitForTask` | task 10 `succeeded` |
+| `client.createIndex('messages', {primaryKey:'messageId'})` then `waitForTask` | task 12 `succeeded` |
+| `index.updateSettings({filterableAttributes:['user']})` on both | tasks 11 and 13 `succeeded` |
+| `index.addDocuments(docs, {primaryKey})` on both | tasks 14 and 15 `succeeded`, 3 documents each |
+| `index.search(q, {filter: 'user = "<id>"'})`, the search the app actually runs | `convos.search('vole')` returns `["Orkney vole taxonomy"]`; `messages.search('vole')` returns `["m-bbb-1"]` |
+| Typo tolerance through the same path | `messages.search('cloudrn manifst')` returns `["m-aaa-1"]` |
+| Per-user isolation through the `user` filter | 0 documents belonging to another user in any filtered result; the other user's own filter returns only their own document |
+| `index.getDocument(id)` | returns `"Packaging Meilisearch for Cloudron"` |
+| `index.deleteDocument(id)` | task 16 `succeeded`; `GET` on that id afterwards `http=404 document_not_found`, and the search that used to return it returns 0 hits |
+
+The keyed search path is proven end to end: every call above carried the master key, the way
+LibreChat carries `MEILI_MASTER_KEY`, and every one succeeded through the public hostname.
 
 ### Gate 3: update and restore
+
+Not run. One Gate 3 precondition was settled early, because it was cheap and it decides whether
+the leg 3 design is safe on a real platform at all.
+
+**Does the platform's health checker tolerate the leg 3 window? Yes, comfortably.** Provoked on
+2026-07-31 by writing `1.50.0` into `/app/db/.meili-version` on a test install and restarting.
+
+| Check | Expected | Evidence |
+|---|---|---|
+| Leg 3 is entered | Log names leg 3 | `leg : 3, store written by 1.50.0, older than 1.51.0, upgrading` |
+| The platform accepts the app as healthy during the supervised upgrade | `Wait for health check` passes immediately | `cloudron restart` returned `App restarted` 17 seconds after it was issued, while the supervised upgrade was still running (it did not finish for another 23 seconds) |
+| No platform-initiated restart during the window | Exactly one boot | One `booting` line for this restart, and the only `Restarting container` line is the deliberate task. No `unhealthy` line anywhere |
+| Every platform health poll during the window answered | All 200 | `Mozilla (CloudronHealth)` polls at 00:29:30, 00:29:40, 00:29:50, 00:30:00, 00:30:10Z, all `status_code=200`. The 00:29:50 poll landed in the same second as `stopping the supervised process` |
+| An external observer sees no outage | Continuous 200 | An independent 2 second poll of the public hostname recorded 200 throughout, with a single 502 at 00:29:28Z during container teardown, before `start.sh` ran at all |
+| The window is shorter on the box than locally | About 51s locally | **26 seconds** here: `booting` 00:29:27Z to `marker : healthy` 00:29:53Z, of which the no-task grace period was 23 seconds |
+| Data and credentials survive leg 3 | Unchanged | Index document counts identical before and after (`alpha` 1, `beta` 1, `convos` 2, `messages` 3); a scoped key minted before the restart still returns its hit; master key sha256 still `bed6e834...`; marker advanced to `1.51.0`; zero quarantine directories |
+
+The one residual risk, stated honestly: the port is free for under a second between the supervised
+process stopping and the final `exec`. The platform polls every 10 seconds, so a poll can land in
+that gap. It did not here, and a single miss would not be enough on its own, but that is the only
+part of the window that is not proven safe.
 
 | Check | Expected | Evidence |
 |---|---|---|
@@ -151,6 +218,7 @@ error and the ways out.
 
 | Check | Expected | Evidence |
 |---|---|---|
+| cgroup memory at idle | Recorded | 2026-07-31, empty store, no traffic: `memory.current` 30 896 128 bytes, `memory.peak` 32 083 968 bytes, `memory.max` 2 147 483 648 bytes. That is 1.4 per cent of the limit |
 | cgroup RSS at idle | Recorded | not yet run |
 | cgroup RSS during bulk indexing of a realistic corpus | Recorded, with the corpus described | not yet run |
 | Swap usage during indexing | Recorded | not yet run |

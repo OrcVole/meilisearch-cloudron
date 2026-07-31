@@ -5,9 +5,11 @@ repository and the logs can find and fix a failure. When you fix a new failure, 
 failures" with the symptom, the cause, and the fix.
 
 All five gates have now run on a real box against the shipping digest, and every table below carries
-real evidence. Gates 0 to 3 PASS; Gate 4 FAILS on sizing and recommends a larger `memoryLimit`. Do
-not fill a gate row with anything that was not actually observed on a running box; local findings go
-in "Invariants proven locally" instead.
+real evidence. **Gates 0 to 4 PASS.** Gate 4 failed its sizing criterion at a `memoryLimit` of
+2 GiB, the limit was raised to 4 GiB, and the gate was re-run at the new limit against the same
+corpus and passed. Both measurements are kept below, because the pair is what explains the value.
+Do not fill a gate row with anything that was not actually observed on a running box; local findings
+go in "Invariants proven locally" instead.
 
 ## State on disk (where to look first)
 
@@ -122,12 +124,15 @@ localhost, so the reverse proxy and TLS are part of what passed. Gates 3 and 4 a
 | Store created on the persistent path | `/app/db/data.ms` exists, owned cloudron | `drwxr-xr-x cloudron cloudron /app/db/data.ms` containing `VERSION` and `auth/` |
 | Endpoint file written with a reachable IPv4 | Address matches what the platform itself routes to | `/app/data/.endpoint` = `http://172.18.16.57:7700`, mode 0640 cloudron:cloudron. The container has exactly one global IPv4 (`eth0 172.18.16.57/16`) alongside one global IPv6, and the platform's own nginx config for this app names `"ip":"172.18.16.57"`. `curl $(cat .endpoint)/health` from inside returns 200 |
 | Version marker written only after health | Marker timestamp later than first health 200 | First health 200 at 00:07:07Z, `marker : healthy, /app/db/.meili-version now records 1.51.0` at 00:07:08Z; file content `1.51.0` |
-| Indexing memory from the manifest, not host RAM | `2147483648 / 3 = 715827882` | Boot log `limit 2048 MiB from cgroup v2 memory.max; indexing memory 682 MiB (limit / 3, floor 256 MiB)`; PID 1 environment carries `MEILI_MAX_INDEXING_MEMORY=715827882`; `/sys/fs/cgroup/memory.max` reads `2147483648` |
+| Indexing memory from the cgroup, not host RAM, and it tracks a changed limit | `limit / 3` | At the 2 GiB limit this gate ran against: boot log `limit 2048 MiB from cgroup v2 memory.max; indexing memory 682 MiB (limit / 3, floor 256 MiB)`, PID 1 environment carrying `MEILI_MAX_INDEXING_MEMORY=715827882`, `/sys/fs/cgroup/memory.max` reading `2147483648`. After the limit was raised to the shipped `4294967296` with no rebuild: `limit 4096 MiB from cgroup v2 memory.max; indexing memory 1365 MiB (limit / 3, floor 256 MiB)`, unprompted, on the next boot |
 | Process tree is as designed | tini as PID 1, server as the cloudron user | `1 0 root /usr/bin/tini -- gosu cloudron:cloudron /app/code/meilisearch`, `50 1 cloudron /app/code/meilisearch` |
 | Production mode forced | `Environment: "production"`, store path not overridable | Startup banner `Environment: "production"`, `Database path: "/app/db/data.ms"` |
 
 Idle memory at rest, for Gate 4's baseline: `memory.current` 30 896 128 bytes, `memory.peak`
-32 083 968 bytes, against a 2 147 483 648 byte limit.
+32 083 968 bytes, against a 2 147 483 648 byte limit. Re-measured at the shipped 4 GiB limit with a
+near-empty store: `memory.current` 30 425 088, `memory.peak` 31 223 808, `memory.stat anon`
+28 246 016, server RSS 45 140 KiB. **Idle does not move with the limit**, which is the expected
+shape and worth having on record.
 
 ### Gate 1: auth. PASS
 
@@ -336,7 +341,12 @@ tries, and that being hit once would not matter.
 | Losing a poll is survivable anyway | no reaction | 2 isolated losses on a healthy serving app, no `unhealthy` line, no restart, no quarantine directory |
 | The window is stable at scale | ~26 s regardless of store size | 26–29 s across five cycles against a **4.6 GB** store, versus 26 s previously against a near-empty one. The 20-second no-task grace dominates it; the store size does not |
 
-### Gate 4: memory. FAIL on sizing (no OOM kill)
+### Gate 4: memory. PASS at the shipped 4 GiB, after failing at 2 GiB
+
+Read the two measurements in order. The first is why the limit is 4 GiB; the second is the evidence
+that 4 GiB is right.
+
+#### First measurement, at `memoryLimit` 2 GiB: FAIL on sizing (no OOM kill)
 
 Load: the same one-million-document corpus described under Gate 3, pushed as 50 requests of 20 000
 documents as fast as the link allowed, so a deep queue built up. Sampler ran inside the container
@@ -421,13 +431,89 @@ the only figure that distinguishes the two runs.)
 **Disk, recorded because nobody guesses it right:** 401 705 492 bytes of NDJSON became a
 4 590 416 518-byte store, **11.4×**. Plan disk at roughly twelve times the corpus.
 
-**Verdict and recommendation.** Gate 4 FAILS. It is a manifest-value failure, not a package defect:
-`memoryLimit` is a manifest field, so fixing it needs no rebuild and does not invalidate the digest
-gates 0 to 3 passed against. Recommended `memoryLimit` **4 GiB (`4294967296`)**: observed demand
-about 2.5 GiB, divided by 0.7, rounded up to the next sensible step. Keep the divide-by-three as the
-default split (it raises the indexer budget to 1365 MiB automatically) but stop describing it as a
-bound. **Gate 4 must be re-run at the new limit before the value is treated as proven.** Not changed
-unilaterally by the gate session; the operator decides.
+**Verdict at 2 GiB.** FAIL. A manifest-value failure, not a package defect: `memoryLimit` is a
+manifest field, so fixing it needs no rebuild and does not invalidate the digest gates 0 to 3 passed
+against. Raised to **4 GiB (`4294967296`)** and re-run, below.
+
+#### Second measurement, at `memoryLimit` 4 GiB: PASS
+
+Same digest, same corpus (50 NDJSON batches, 401 705 492 bytes, generator seed `20260731`, first
+batch sha256 `e2c9ee966765a511…`), same client behaviour, same sampling method. The `corpus` and
+`serial` indexes from the 2 GiB round were deleted first so the store started at 954 368 bytes, and
+the app was restarted so `memory.peak` started clean at 31 203 328.
+
+**Applying the limit without touching the image.** `cloudron configure` in the current CLI has no
+memory option at all; the flag lives on `cloudron install`, which is the wrong instrument for a
+standing app. The platform endpoint the CLI itself uses is
+`POST /api/v1/apps/<id>/configure/memory_limit` with `{"memoryLimit": 4294967296}`. It returned 202,
+the task finished in 59 seconds, and afterwards `/sys/fs/cgroup/memory.max` read `4294967296` while
+`manifest.dockerImage` was unchanged. The boot log recomputed the indexer budget without being told:
+`memory   : limit 4096 MiB from cgroup v2 memory.max; indexing memory 1365 MiB (limit / 3, floor
+256 MiB)`.
+
+**Finding the server process.** Match **cmdline exactly `/app/code/meilisearch` with parent pid 1**
+(pid 1 is `/usr/bin/tini -- gosu cloudron:cloudron /app/code/meilisearch`). There is no `--db-path`
+argument to match on, because the database path arrives in the environment, and
+`/proc/<pid>/environ` is not readable from an exec session while `/proc/<pid>/status` is. A looser
+match is how a previous round recorded a nonsense `VmRSS: 1552 kB` for the reading shell.
+
+453 samples at 3-second intervals, 09:16:10Z to 09:46:29Z.
+
+| Counter | Idle | Loaded (peak) | At rest afterwards, 4.9 GB store |
+|---|---|---|---|
+| `memory.current` | 30 425 088 | **4 294 967 296**, exactly `memory.max` | 4 223 152 128 |
+| `memory.peak` | 31 223 808 | **4 294 971 392** = 100.0001 % of the 4 GiB limit | — |
+| `memory.stat anon` | 28 246 016 | **1 954 820 096** (1.82 GiB) | 607 944 704 |
+| `memory.stat file` (page cache of the mapped store) | ~0.1 MB | 3 684 139 008 | 3 504 963 584 |
+| `memory.stat slab` | ~0.7 MB | 96 317 512 | 91 553 768 |
+| `meilisearch` RSS | 45 140 KiB | **4 073 836 KiB = 3.89 GiB** | 3 334 944 KiB |
+| `meilisearch` VSZ | 23 239 060 KiB = 22.2 TiB | 2 175 821 432 KiB = 2.03 TiB | 2 173 951 596 KiB |
+| `memory.swap.current` | 0 | 570 769 408, **and zero at the anonymous peak** | 528 953 344 |
+| **`anon` + swap, worst single sample** | 28 246 016 | **1 954 820 096 = 45.5 % of the limit** | 1 136 898 048 |
+| `memory.events oom_kill` | 0 | **0** | 0 |
+| `memory.events max` (reclaim at limit) | 0 | **4 342** | — |
+| `pgmajfault` / `workingset_refault_anon` | 7 / 0 | 32 968 / 119 624 | — |
+| `memory.pressure full avg10` | 0 | 33.98 | ~0 |
+
+| Check | Expected | Result |
+|---|---|---|
+| `oom_kill` zero, app healthy, load verifiably landed | yes | **PASS**: 0 kills; `/health` 200; 1 000 000 documents, zero failed tasks, filtered and sorted search returns 122 642 hits |
+| loaded peak at or below 80 per cent of `memoryLimit` | ≤ 3.2 GiB | **PASS** on `anon` + swap: 1 954 820 096, 45.5 per cent. **Unsatisfiable as written** against `memory.peak`, which is 100.0001 per cent and is page cache |
+| worst-case bound clears `memoryLimit` with real margin | several hundred MB spare | **PASS**: anonymous peak 1.82 GiB plus 0.09 GiB slab, about **2.0 GiB against 4 GiB** |
+
+**`memory.peak` can never pass this gate for this application, at any limit.** The page cache
+backing the memory-mapped store expands to fill whatever the cgroup allows and is charged to the
+cgroup, so the high-water mark is the limit at 2 GiB, at 4 GiB, and would be at 64 GiB. For a
+memory-mapped store the check has to be read against `memory.stat anon` plus `memory.swap.current`.
+That is a defect in the gate's wording, recorded here because it will recur on the next version bump
+and on any other package that maps its store.
+
+**Swap is still used at 4 GiB, and it is a different phenomenon.** At 2 GiB, swap was in use *at the
+anonymous peak*: the pages had nowhere else to go. At 4 GiB, swap was **zero at the anonymous peak**
+(09:27:24Z) and only grew ten minutes later, once `anon` had fallen below 250 MB and the page cache
+wanted more than 3.5 GB. That is the kernel trading cold anonymous pages for hot cache. **A host
+without swap would have reclaimed page cache instead, which costs re-reads and nothing else**, so
+nothing in this run depended on swap existing. The caveat that only a swapless host proves a
+swapless host still stands.
+
+**`memory.pressure full avg10` rose, from 18.04 to 33.98, and that is not a regression.** Pressure
+counts stall time from reclaim of any kind, and there is twice as much page cache being churned. The
+counters that separate healthy reclaim from distress both improved sharply: reclaim-at-limit events
+fell from 30 867 to 4 342, and major faults from 94 070 to 32 968.
+
+**Auto-batching is unchanged by the limit**, so the client-side advice keeps all its value: the
+largest coalesced batch in this run was 30 tasks and 600 000 received documents (`PT932.9S`). A
+deliberately doubled control, 99 tasks and 1 980 000 received documents through the same index,
+coalesced 45 tasks into one 900 000-document batch and peaked *lower*, at 1 868 193 792 of `anon`
+with zero swap at the peak, which is the strongest single piece of headroom evidence in the round.
+
+**Disk at 4 GiB:** 401 705 492 bytes of NDJSON became a 4 864 246 406-byte store, **12.1×**, against
+11.4× at 2 GiB. The "plan disk at roughly twelve times the corpus" guidance is confirmed.
+
+**Verdict.** Gate 4 PASSES at `memoryLimit` 4294967296. The anonymous peak is 45.5 per cent of the
+limit with about 2 GiB of margin, and there is no case for going higher for a corpus of this size and
+shape. Keep the divide-by-three as the default split, which produced 1365 MiB automatically, but do
+not describe it as a bound: anonymous memory reached 1.82 GiB against it.
 
 ## Known failures
 

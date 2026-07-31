@@ -2,6 +2,12 @@
 phase-notes/
 *foundation*.md
 
+# Any local copy of the maintainer's private packaging field guide or its notes repository.
+packaging-notes/
+CLOUDRON-PACKAGING-ON-*.md
+*field-guide*.md
+checklists/
+
 # Maintainer-private anonymity list (used by test/secret-scan.sh), never published.
 .anonymize-list
 

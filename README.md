@@ -42,15 +42,35 @@ it.
 
 ## Install
 
-Point the Cloudron CLI at a chosen domain and build on the server (no local Docker engine is
-needed):
+Requires Cloudron 9.1.0 or newer, because the package uses `persistentDirs`, `backupCommand`, and
+`iconUrl`, all of which arrived in 9.1.
+
+**From the Cloudron dashboard (recommended).** In the App Store, open the **Add custom app**
+dropdown at the top right, choose **Community app**, and paste this URL:
+
+```
+https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/CloudronVersions.json
+```
+
+Applications installed this way receive updates automatically as new versions are published.
+
+**From the CLI**, which does the same thing:
+
+```
+cloudron install \
+  --versions-url https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/CloudronVersions.json \
+  --location search.example.com
+```
+
+**Building on the server instead**, for a box below 9.1.0 or for local modifications, from a clone
+of this repository:
 
 ```
 cloudron install --location search.example.com
 ```
 
-The image is not yet published; this repository is at the scaffold stage. See
-`docs/PACKAGING-NOTES.md` for the current state of the build.
+The published image is `ghcr.io/orcvole/meilisearch-cloudron`, pinned by digest in both
+`CloudronManifest.json` and `CloudronVersions.json`. It is public and pulls without credentials.
 
 ## First steps
 
@@ -318,10 +338,26 @@ newer than itself.
 
 Updating rebuilds the image against a newer upstream release. Cloudron takes an automatic backup
 before an `--image` update, which is the safety net for the in-place migration the entrypoint runs
-(`--upgrade-db`) when the installed data store is older than the new binary. This project has not
-yet exercised the ladder that proves this end to end; see `docs/PACKAGING-NOTES.md` for what is
-verified versus assumed at the current stage, and `docs/decisions/` for the full reasoning behind
-each of these choices.
+(`--upgrade-db`) when the installed data store is older than the new binary.
+
+**What is proven, and what is not.** Backup while idle, backup under heavy indexing churn, an
+in-place restore, a clone from the same backup artefact, and a rollback restore onto a newer live
+store have all been exercised against a real Cloudron and are recorded with their evidence in
+`docs/DEBUGGING.md`. So has the dump import path, as the fall-back when no snapshot is present.
+**A real cross-version `--upgrade-db` format migration has not been exercised**, because no
+Meilisearch release newer than the packaged 1.51.0 existed at packaging time. The migration branch
+has only been driven by forcing the version marker backwards, which proves the branch is taken, the
+supervised process is started, the health check stays satisfied throughout, and the marker is
+rewritten afterwards, but it does not prove that a genuine format migration completes correctly.
+Treat the first upstream version bump as the test of that path, and keep the pre-update backup.
+
+One known defect is carried deliberately. If a restore has to fall back to importing a dump, the
+import is a full re-index and can take much longer than the entrypoint's 300-second health wait; on
+a 680 000-document dump it took about seven minutes. Nothing is lost, the shortfall is logged
+loudly, and the next restart repairs the version marker by itself, but the first boot after such a
+restore will log a warning. Raise `MEILISEARCH_HEALTH_TIMEOUT` in `/app/data/env` if you expect a
+large dump import. See `docs/PACKAGING-NOTES.md` for what is verified versus assumed, and
+`docs/decisions/` for the full reasoning behind each of these choices.
 
 ## Documentation
 
@@ -329,7 +365,7 @@ each of these choices.
 - `docs/PACKAGING-NOTES.md` is the anonymised, verified-versus-assumed log for this package.
 - `docs/FOR-CLOUDRON.md` carries platform observations offered back to the Cloudron team.
 - `docs/FOR-UPSTREAM.md` carries packaging observations offered back to the Meilisearch team.
-- `docs/DEBUGGING.md` is the runbook, including the gate evidence tables once they exist.
+- `docs/DEBUGGING.md` is the runbook, including the gate evidence tables.
 - `AGENTS.md` is the working contract for anyone, human or AI agent, who edits this repository.
 
 ## Licence

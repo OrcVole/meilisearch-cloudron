@@ -4,6 +4,56 @@ Anonymised. Box-specific detail lives in the maintainer's local notes, not here.
 
 ---
 
+## 2026-07-31: Publication preparation, versions channel, and screenshot provenance
+
+The package is released as version `1.0.0` against upstream Meilisearch `1.51.0`. The manifest
+`version` field had been left at the scaffold value `0.1.0`, with a changelog entry that still said
+"no Dockerfile or entrypoint yet"; both would have been published verbatim into the community
+store listing, because a versions-url install reads only `CloudronVersions.json` and never the
+repository. Corrected before any submission.
+
+`CloudronVersions.json` is generated with `cloudron versions add --state published`, which runs the
+same `@cloudron/manifest-format` validation the store's own sync uses, expands the `file://`
+description, changelog and post-install message into the embedded manifest, and leaves `icon` as
+`file://logo.png`. The CLI takes the image reference from its own state file rather than from the
+manifest, so the digest-pinned reference has to be written there by hand when the image was built
+with podman rather than `cloudron build`. The CLI writes `ts` and `creationDate` as RFC-2822
+strings; both parse, but this package normalises `ts` to Unix milliseconds as a JSON number and
+`creationDate` to ISO-8601, which is the form most published packages use and the form the
+pre-publish checklist asserts.
+
+**Screenshot provenance, recorded because these are public artefacts.**
+
+- `screenshots/api-search.png` is a rendered terminal transcript. The responses in it are verbatim
+  output from the shipping image (`ghcr.io/orcvole/meilisearch-cloudron@sha256:13726db1…`) run
+  locally under rootless podman on a throwaway data directory, driven with `curl`: the
+  unauthenticated `GET /health` and `GET /`, the unauthenticated `GET /indexes` refusal, and a
+  typo-tolerant search over five documents. The host shown in the command lines is the
+  `search.example.com` placeholder rather than the machine it ran on, and no key value appears. It
+  is used because the package runs `MEILI_ENV=production`, which disables Meilisearch's built-in
+  search preview interface: there is no web interface to photograph, and showing one would
+  misrepresent what an installer gets.
+- `screenshots/install-community-app.png` is a genuine capture of the Cloudron dashboard App Store
+  page with the **Add custom app** dropdown open, cropped to exclude the sidebar, the box name, the
+  signed-in user and every domain. The application tiles visible in the crop are Cloudron's own
+  public catalogue, identical on every installation, not an inventory of any particular box.
+- No upstream marketing image is shipped. The only upstream asset in the repository remains
+  `logo.png`, the canonical brand mark, carried under the same reasoning as the sibling packages:
+  it identifies the packaged application, is used unmodified, and the README, DESCRIPTION and
+  LICENCE section all state plainly that the mark belongs to its owner and that this package is
+  neither affiliated with nor endorsed by the Meilisearch project. Upstream imagery depicting the
+  search preview interface or Meilisearch Cloud is deliberately **not** used, because this package
+  exposes neither.
+
+**Not captured, and why.** The Cloudron post-install message pane and the **Community app** URL
+dialog are the two frames a first-time installer would most benefit from, and neither is in the
+repository. A headless browser can be given a dashboard session, but the attempt to drive one far
+enough to open that dialog ended with the dashboard invalidating the command-line interface's
+session token, so the route was abandoned rather than retried. Those two frames are best captured
+by the maintainer from an ordinary logged-in browser, cropped to the dialog itself.
+
+---
+
 ## 2026-07-31: Gate 3 passed on all five legs; Gate 4 failed on sizing and wants 4 GB
 
 The whole point of this package is Gate 3, and it passed: a backup with the app idle, a backup

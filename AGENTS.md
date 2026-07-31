@@ -54,29 +54,28 @@ dashboard, no supervisor, and no bundled reverse proxy.
 - **Manifest id:** `io.github.orcvole.meilisearch`. The repository's `-cloudron` suffix does not
   enter the id. `author` and `packagerName` are `OrcVole`.
 - **Registry:** `ghcr.io/orcvole/meilisearch-cloudron`, pushed public so the box pulls without
-  credentials. Tag scheme `<upstream-version>-<pkg-rev>`. Not yet built at this phase.
+  credentials. Tag scheme `<upstream-version>-<pkg-rev>`; the shipping tag is `1.51.0-1`.
 - **Repos:** GitHub `OrcVole/meilisearch-cloudron` is canonical. A private mirror also exists; its
   URL is maintainer-local and deliberately not recorded in tracked files.
-- **memoryLimit:** 2147483648 (2 GB) to start, per the foundation brief. LMDB mmap makes VSZ
-  meaningless; the shipped floor is to be confirmed by a cgroup RSS measurement under an indexing
-  load once the image exists, not assumed from this starting value.
+- **memoryLimit:** 4294967296 (4 GB), raised from the 2 GB starting value on gate 4 evidence. LMDB
+  mmap makes VSZ meaningless; the shipped floor was set from a cgroup anonymous-memory measurement
+  under an indexing load, not assumed.
 - **Health:** `healthCheckPath = /health`, the one route that stays open once a master key is set.
-  Verify empirically, with and without a key, at the first gate ladder run.
+  Confirmed empirically, with and without a key, at gate 0.
 - **Auth topology:** no addon-based authentication and no `proxyAuth`. `MEILI_ENV=production`
   enforces the master key; every route except `GET /health` requires it or a key derived from it.
 
 ## Pinned upstream
 
-- `cloudron/base:5.0.0` (Ubuntu 24.04, glibc 2.39), digest to be pinned in the Dockerfile at the
-  build phase from the current packaging skill reference.
-- Meilisearch `1.51.0`, official GitHub release glibc binary for x86_64, pinned by sha256 once the
-  Dockerfile exists. Licence: MIT AND BUSL-1.1, community features only.
+- `cloudron/base:5.0.0` (Ubuntu 24.04, glibc 2.39), digest-pinned in the Dockerfile.
+- Meilisearch `1.51.0`, official GitHub release glibc binary for x86_64, pinned by sha256 in the
+  Dockerfile. Licence: MIT AND BUSL-1.1, community features only.
 - `meilitool`, from the same release if published as an asset, else extracted from the official
   `getmeili/meilisearch:v1.51.0` Docker image in a build stage (musl static; verify with `file`).
 
 ## Build shape
 
-Not yet built; this is the scaffold phase. Per the foundation brief (ADR 0001): a builder stage
+Per ADR 0001, and as built: a builder stage
 fetches and sha256-verifies the official release binary (and `meilitool`), and the final stage
 copies it onto pinned `cloudron/base`. An `ldd` check at build time fails the build on any
 unresolved symbol against the base image's glibc, rather than failing at runtime. If the glibc
@@ -115,18 +114,18 @@ the Dockerfile phase, not from memory.
 
 `/app/db` (the Meilisearch data store) is a Cloudron `persistentDirs` path, carried through every
 backup, clone, and restore, and deliberately excluded from the ordinary `/app/data` file walk
-because it churns under indexing. A `backupCommand` script (`/app/code/backup-snapshot.sh`, not yet
-written) runs in a short-lived, unrelated container at backup time, asks the live instance over its
+because it churns under indexing. A `backupCommand` script (`/app/code/backup-snapshot.sh`) runs in
+a short-lived, unrelated container at backup time, asks the live instance over its
 own API to take a snapshot, and writes it into `/app/data/snapshots`, which the ordinary file walk
-does capture. There is no `restoreCommand`: the boot-time entrypoint (not yet written) detects an
+does capture. There is no `restoreCommand`: the boot-time entrypoint (`start.sh`) detects an
 empty `/app/db` (clone, or fresh install), a version-mismatched data store (package update or
 rollback), or a normal restart, and imports the newest snapshot or dump accordingly. See
 `docs/decisions/0004-data-layout-and-backup.md` and `docs/decisions/0005-boot-decision-tree.md`.
 
 ## Future compatibility
 
-The single bump point for a version upgrade will be one build argument in the Dockerfile once it
-exists, mirrored in the manifest `upstreamVersion`. A newer Meilisearch binary refuses to open an
+The single bump point for a version upgrade is one build argument in the Dockerfile,
+mirrored in the manifest `upstreamVersion`. A newer Meilisearch binary refuses to open an
 older `data.ms` outright; the boot entrypoint runs `--upgrade-db` before the normal start when the
 installed store is older than the binary, backstopped by Cloudron's automatic pre-update backup.
 Sharding, remote (S3) snapshot storage, and other Business Source License 1.1 enterprise edition

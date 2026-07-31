@@ -18,7 +18,7 @@
     "/app/db"
   ],
   "backupCommand": "/app/code/backup-snapshot.sh",
-  "memoryLimit": 2147483648,
+  "memoryLimit": 4294967296,
   "postInstallMessage": "file://POSTINSTALL.md",
   "checklist": {
     "masterkey": {

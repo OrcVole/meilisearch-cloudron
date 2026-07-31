@@ -148,49 +148,57 @@ authentication.
 
 ## Sizing: memory, disk, and how to bulk index without hurting
 
-Measured on a real Cloudron, 2026-07-31, indexing one million small documents (about 400 bytes
-each, over a deliberately large vocabulary) into a 2 GiB instance. The numbers are worth reading
-before you plan a large import.
+Measured on a real Cloudron, 2026-07-31, indexing the same one million small documents (about 400
+bytes each, over a deliberately large vocabulary) twice: once into a 2 GiB instance and once into
+the 4 GiB instance this package now ships. The numbers are worth reading before you plan a large
+import.
 
-**Disk.** 401 MB of raw NDJSON became a **4.6 GB data store**, about **twelve times the input**.
+**Disk.** 401 MB of raw NDJSON became a **4.9 GB data store**, about **twelve times the input**.
 Meilisearch trades disk for query speed, and the ratio surprises almost everyone. Plan disk at
 roughly twelve times the size of the corpus you intend to index, not at its size.
 
 **Memory, and which number to look at.** Three figures get quoted about a search engine and only
 one of them means anything:
 
-- **Virtual size is meaningless here.** Meilisearch memory-maps its store, so `ps` reports a
-  virtual size of about **10 TB**. It is reserved address space, not memory. Ignore it completely.
+- **Virtual size is meaningless here.** Meilisearch memory-maps its store, so `ps` reports a virtual
+  size measured in terabytes, anywhere from about 2 TB to about 22 TB depending on how much of the
+  address space the store currently reserves. It is reserved address space, not memory. Ignore it
+  completely.
 - **Total memory usage sitting at 100 per cent of the limit is normal**, not a fault. Most of it is
   the operating system's page cache holding parts of the memory-mapped store, which the kernel
   drops the instant anything else needs the space. Any store larger than the memory limit will make
   the graph in Cloudron's dashboard sit near the top and stay there, with the application perfectly
-  healthy.
-- **Anonymous memory is the figure that decides whether the application survives.** In the test
-  above it peaked at about **1.85 GB inside a 2 GB limit**, with another 660 MB pushed out to the
-  host's swap. Total demand was around 2.5 GB.
+  healthy. Raising the memory limit does not change this: the page cache simply expands to fill it.
+- **Anonymous memory is the figure that decides whether the application survives**, because those
+  pages cannot be dropped, only swapped or killed. Indexing the million-document corpus peaked at
+  **1.82 GB of anonymous memory**, at both memory limits. Inside a 2 GB limit that did not fit, and
+  about 660 MB of it was pushed out to the host's swap while indexing was still running. Inside a
+  4 GB limit it fitted entirely, with swap at zero at the moment of the peak.
 
 **So: 2 GB is comfortable for tens of thousands of documents and ordinary query traffic, and it is
-not enough to bulk-import a million documents in one go.** For a corpus of that size, give the
-application **4 GB**. You can change the memory limit at any time from the application's Resources
-page; nothing needs reinstalling.
+not enough to bulk-import a million documents in one go.** The shipped default is **4 GB**, which
+was measured with the anonymous peak at **46 per cent** of the limit and around 2 GB to spare, and
+that is enough for a corpus of this size and shape without going higher. You can change the memory
+limit at any time from the application's Resources page; nothing needs reinstalling.
 
 **The single most useful thing you can do costs nothing.** Meilisearch merges every queued document
-addition for the same index into one batch and processes it as a single unit of work. In the test
-above, thirty-seven separate twenty-thousand-document requests were merged into one
-**seven-hundred-and-forty-thousand-document** batch, and that batch is what set the memory peak.
-So:
+addition for the same index into one batch and processes it as a single unit of work. In the tests
+above, up to forty-five separate twenty-thousand-document requests were merged into one batch of
+**nine hundred thousand documents**, and that batch is what set the memory peak. Raising the memory
+limit does not make Meilisearch merge less. So:
 
 > When bulk importing, wait for each `documentAdditionOrUpdate` task to reach `succeeded` before
 > sending the next batch. Poll `GET /tasks/<taskUid>`. Firing all your batches at once multiplies
 > the peak memory by however many batches happen to be waiting.
 
-Measured both ways on the same data: letting thirty-seven batches merge peaked at **1.85 GB** of
-anonymous memory, while sending them one at a time peaked at **1.31 GB** and used a fifth as much
-swap. Serialising is about three times slower per document, so it is a trade, not a free win — but
-it is the difference between an import that fits and one that does not. Note also that a single
-twenty-thousand-document batch still wants over 1.3 GB on its own, so client discipline alone does
-not make a 2 GB instance comfortable for a corpus this size.
+Measured both ways on the same data inside a 2 GB limit: letting thirty-seven batches merge peaked
+at **1.85 GB** of anonymous memory, while sending them one at a time peaked at **1.31 GB** and used
+a fifth as much swap. Serialising is about three times slower per document, so it is a trade rather
+than a free win, but it is the difference between an import that fits and one that does not. Note
+also that a single twenty-thousand-document batch still wants over 1.3 GB on its own, so client
+discipline alone does not make a 2 GB instance comfortable for a corpus this size. At the shipped
+4 GB limit the discipline stops being load-bearing for a corpus of this size and becomes what it
+should be, a way to keep headroom for everything else the application is doing.
 
 `MEILI_MAX_INDEXING_MEMORY` defaults to the memory limit divided by three. That is a sensible split
 between the indexer and everything else, but it is **not** a ceiling on the process: the measured

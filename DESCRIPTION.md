@@ -1,3 +1,5 @@
+<upstream>1.51.0</upstream>
+
 Meilisearch is an open source, typo-tolerant search engine written in Rust. It indexes your
 documents and serves fast, relevant full-text search, filtering, and sorting over a simple REST
 API, which makes it a building block for application search, site search, and chat or knowledge

@@ -1,5 +1,15 @@
 # Changelog
 
+[1.0.1]
+- Upstream Meilisearch 1.51.0 to 1.52.0 (38 commits). New experimental tasks/batches streaming
+  routes (`GET /tasks/stream`, `GET /batches/stream`), off by default and enabled only via
+  `MEILI_EXPERIMENTAL_ENABLE_TASKS_STREAMING_ROUTE`; no existing flag this package passes was
+  renamed or removed.
+- First release in which this package performs its supervised in-place database upgrade over an
+  existing store: on first boot after the update, Meilisearch runs an `upgradeDatabase` task under
+  the package's supervised-upgrade machinery (version marker, resumable, stop-safe) before serving.
+  Expect a longer first boot on populated instances.
+
 [1.0.0]
 - Initial release. Packages Meilisearch 1.51.0 on cloudron/base:5.0.0, with the upstream release
   binary and meilitool pinned by sha256 and left unmodified.

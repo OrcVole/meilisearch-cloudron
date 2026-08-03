@@ -25,6 +25,20 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 IMAGE="${1:-ghcr.io/orcvole/meilisearch-cloudron:dev}"
+
+# --- identity guard (#188): refuse to test an image that is not this checkout's version --------
+# A default tag nothing rebuilds WILL eventually hold a stale build, and every assertion below
+# then passes against the wrong subject (proved on langfuse 2026-08-03: 12/12 green on a
+# previous-major image). ABORT, not FAIL: once the subject is wrong, later results are meaningless.
+_g_engine="$(command -v podman || command -v docker)"
+_g_want=$(grep -o '"upstreamVersion"[^,]*' "$(dirname "$0")/../CloudronManifest.json" | head -1 | cut -d'"' -f4)
+_g_got=$("$_g_engine" run --rm --entrypoint /app/code/meilisearch "$IMAGE" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ -z "$_g_got" ] || [ "$_g_want" != "$_g_got" ]; then
+  echo "ABORT: ${IMAGE} bakes meilisearch '${_g_got:-unreadable}', manifest says '${_g_want}'." >&2
+  echo "       Build from this checkout before smoking it (stale-tag trap, field guide #188)." >&2
+  exit 2
+fi
+echo "identity: image bakes meilisearch ${_g_got}, matching the manifest"
 ENGINE="${ENGINE:-$(command -v podman >/dev/null && echo podman || echo docker)}"
 NAME="meili-smoke-$$"
 VOL="meili-smoke-vol-$$"

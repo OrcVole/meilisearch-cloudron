@@ -7,9 +7,9 @@
   "changelog": "file://CHANGELOG.md",
   "icon": "file://logo.png",
   "iconUrl": "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/logo.png",
-  "version": "1.0.0",
-  "upstreamVersion": "1.51.0",
-  "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:13726db11bd9545985ae5e98f6efb9ada660bcdd87958d827e085328389e842e",
+  "version": "1.0.1",
+  "upstreamVersion": "1.52.0",
+  "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:c54ab2028a10cac4bd5cca058c33eb2701eb63ad8426368b55393e3108c4ac1c",
   "healthCheckPath": "/health",
   "httpPort": 7700,
   "addons": {

@@ -131,10 +131,18 @@ elif [[ -z "$CRI"   ]]; then echo "  (no podman or docker found; skipped)"
 elif ! "$CRI" image exists "$IMAGE" 2>/dev/null && ! "$CRI" image inspect "$IMAGE" >/dev/null 2>&1; then
   echo "  ($IMAGE not present locally; pull it to scan)"
 else
+  # Runtime-managed files are NOT image content: both engines bind-mount /etc/hosts,
+  # /etc/resolv.conf and /etc/hostname into every container, so a `run`-based grep reads the HOST'S
+  # copies and reports the operator's own machine as a leak inside the artefact. Found 2026-08-08
+  # when a CI run failed on /etc/hosts entries naming the rig; the image ships those files EMPTY.
+  # --network=none stops the wiring, and podman's --no-hosts stops the hosts file being seeded from
+  # the host's own (its default base_hosts_file="" means exactly that).
+  RUNFLAGS=(--network=none)
+  [[ "$CRI" == *podman* ]] && RUNFLAGS+=(--no-hosts)
   img() {  # $1=E|F  $2=pattern file  $3..=dirs
     local mode="$1" pf="$2"; shift 2
     [[ -s "$pf" ]] || return 0
-    "$CRI" run --rm -i --user 0 --entrypoint /bin/bash "$IMAGE" \
+    "$CRI" run --rm -i --user 0 "${RUNFLAGS[@]}" --entrypoint /bin/bash "$IMAGE" \
       -c "grep -rIn${mode}iH --exclude-dir=node_modules --exclude-dir=.git -f - $* 2>/dev/null" < "$pf"
   }
   CRIT_DIRS="/app /etc /root /home /usr/local /opt"
@@ -160,7 +168,7 @@ else
     [/etc/ssh/ssh_host_ed25519_key]=0c575ce8d9ba487b05cc473fad4b0650fb950181028e6ac19796f86f56f22a7a
     [/etc/ssh/ssh_host_rsa_key]=ae0ea8087e90baf138d277ca52b6cf47b5010adc0e5bd84236713eee1b85de85
   )
-  ssh_listing="$("$CRI" run --rm --user 0 --entrypoint /bin/bash "$IMAGE" \
+  ssh_listing="$("$CRI" run --rm --user 0 "${RUNFLAGS[@]}" --entrypoint /bin/bash "$IMAGE" \
                   -c 'for f in /etc/ssh/ssh_host_*_key; do [ -e "$f" ] && sha256sum "$f"; done' 2>/dev/null)"
   found=0; pinned_ok=0
   while IFS= read -r line; do

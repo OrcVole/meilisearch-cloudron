@@ -5,3 +5,9 @@
 # so the denylist matching it is correct behaviour and allowlisting it is the honest response.
 # Before 2026-08-09 meilisearch alone handled this, with bespoke code; now it is the shared mechanism.
 Most+github@OrcadianVole.com
+
+# The host CPU model, named in docs/FOR-UPSTREAM.md. That file is a performance report written FOR
+# the upstream project, where the hardware is the point of the report. The denylist matching it is
+# correct -- a CPU model is a fingerprint -- but the mention is deliberate and useful, so it is
+# declared here rather than removed or the pattern weakened.
+E5-2650

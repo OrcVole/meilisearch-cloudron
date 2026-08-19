@@ -17,11 +17,11 @@
 #     invocation, so no musl library is ever installed into a system path where a glibc binary
 #     from the base image could pick it up. See the History note in ADR 0001.
 
-ARG MEILISEARCH_VERSION=1.52.0
+ARG MEILISEARCH_VERSION=1.53.1
 
 # --- Stage 1: the official upstream image, used only as a source for meilitool and musl ------
 # Pinned by digest (resolved 2026-07-30). Tag v1.51.0 resolves to this multi-architecture index.
-FROM docker.io/getmeili/meilisearch:v1.52.0@sha256:d36e713e8f89483af1ab0d72011bbd503f5ab100b68ccbfad51c39e3f0a0567d AS upstream
+FROM docker.io/getmeili/meilisearch:v1.53.1@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431 AS upstream
 
 # --- Stage 2: fetch and verify the official release binary ----------------------------------
 # Built on the same base as the final stage so the build needs no third image.
@@ -32,7 +32,7 @@ ARG MEILISEARCH_VERSION
 # releases API asset object (api.github.com/repos/meilisearch/meilisearch/releases/tags/v1.52.0)
 # on 2026-08-03; the build's own `sha256sum -c` below re-verifies it over the downloaded file.
 # Upstream publishes no separate checksum file with the release.
-ARG MEILISEARCH_SHA256=49df62e15ac62ae3cfcf7fd5d5a5c19de1d930b8b6adcc753882fe7d74c479b3
+ARG MEILISEARCH_SHA256=cd8e446b29cefe44cdbc872ffb2de906ada165f4b96a33bb9e1a706b1e9279a0
 
 RUN set -eux; \
     curl -fsSL -o /tmp/meilisearch \

@@ -1,3 +1,8 @@
+[1.0.2]
+* Meilisearch 1.53.1 (from 1.52.0). Upstream's 1.53.0 security section covers its own GitHub Actions workflows and a quinn-proto dependency bump, neither of which is a fix a Meilisearch operator is exposed to
+* New upstream: foreign-filter sharding with the retrieval limit raised from 100 to 1000 documents, and `indexSize`/`usedIndexSize` added to the stats endpoints
+* New opt-in environment variable `MEILI_EXPERIMENTAL_TASK_QUEUE_MAX_READERS` caps simultaneous LMDB read transactions on the task queue
+
 # Changelog
 
 [1.0.1]

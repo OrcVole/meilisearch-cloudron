@@ -1,11 +1,13 @@
 [1.0.2]
-* Meilisearch 1.53.1 (from 1.52.0). Upstream's 1.53.0 security section covers its own GitHub Actions workflows and a quinn-proto dependency bump, neither of which is a fix a Meilisearch operator is exposed to
-* New upstream: foreign-filter sharding with the retrieval limit raised from 100 to 1000 documents, and `indexSize`/`usedIndexSize` added to the stats endpoints
-* New opt-in environment variable `MEILI_EXPERIMENTAL_TASK_QUEUE_MAX_READERS` caps simultaneous LMDB read transactions on the task queue
+
+- Meilisearch 1.53.1 (from 1.52.0). Upstream's 1.53.0 security section covers its own GitHub Actions workflows and a quinn-proto dependency bump, neither of which is a fix a Meilisearch operator is exposed to
+- New upstream: foreign-filter sharding with the retrieval limit raised from 100 to 1000 documents, and `indexSize`/`usedIndexSize` added to the stats endpoints
+- New opt-in environment variable `MEILI_EXPERIMENTAL_TASK_QUEUE_MAX_READERS` caps simultaneous LMDB read transactions on the task queue
 
 # Changelog
 
 [1.0.1]
+
 - Upstream Meilisearch 1.51.0 to 1.52.0 (38 commits). New experimental tasks/batches streaming
   routes (`GET /tasks/stream`, `GET /batches/stream`), off by default and enabled only via
   `MEILI_EXPERIMENTAL_ENABLE_TASKS_STREAMING_ROUTE`; no existing flag this package passes was
@@ -16,6 +18,7 @@
   Expect a longer first boot on populated instances.
 
 [1.0.0]
+
 - Initial release. Packages Meilisearch 1.51.0 on cloudron/base:5.0.0, with the upstream release
   binary and meilitool pinned by sha256 and left unmodified.
 - Headless search API in production mode: no dashboard, no single sign-on, no proxy authentication.

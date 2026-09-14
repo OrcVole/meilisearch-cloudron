@@ -1,3 +1,7 @@
+[1.0.3]
+
+- Meilisearch 1.53.2 (from 1.53.1). Bug fixes: removal of 100ms task replication penalty, stop-words no longer highlighted in search results, and last indexed documents included in exactness ranking when updating searchable attributes. Security hardening: authorization tied to index opening. Updated charabia dependency to 0.10.0. No operator action required.
+
 [1.0.2]
 
 - Meilisearch 1.53.1 (from 1.52.0). Upstream's 1.53.0 security section covers its own GitHub Actions workflows and a quinn-proto dependency bump, neither of which is a fix a Meilisearch operator is exposed to

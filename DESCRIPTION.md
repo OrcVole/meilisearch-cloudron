@@ -1,4 +1,4 @@
-`<upstream>1.53.2</upstream>
+`<upstream>1.54.0</upstream>
 
 Meilisearch is an open source, typo-tolerant search engine written in Rust. It indexes your
 documents and serves fast, relevant full-text search, filtering, and sorting over a simple REST

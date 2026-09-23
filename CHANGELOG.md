@@ -1,3 +1,7 @@
+[1.1.0]
+
+- Upstream Meilisearch 1.53.2 to 1.54.0. Breaking API change to dynamic search rules `actions` field (list restructured to object with `pin` and `scale` sub-fields); existing rules are migrated automatically during upgrade. New DSR scale action for boosting, deboosting or hiding documents. New `/mcp` endpoint for Model Context Protocol (requires `mcpRoute` experimental feature). Auth crate internal dependency bump (no operator action required). Two new experimental settings: `MEILI_EXPERIMENTAL_DSR_FUEL_MAX_SCALE_ACTIONS` and `MEILI_EXPERIMENTAL_DSR_FUEL_SCALE_FUEL`.
+
 [1.0.3]
 
 - Meilisearch 1.53.2 (from 1.53.1). Bug fixes: removal of 100ms task replication penalty, stop-words no longer highlighted in search results, and last indexed documents included in exactness ranking when updating searchable attributes. Security hardening: authorization tied to index opening. Updated charabia dependency to 0.10.0. No operator action required.

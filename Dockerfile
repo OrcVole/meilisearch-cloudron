@@ -25,7 +25,7 @@ FROM docker.io/getmeili/meilisearch:v1.54.0@sha256:0bf32debcbfa8ba4e418679025f49
 
 # --- Stage 2: fetch and verify the official release binary ----------------------------------
 # Built on the same base as the final stage so the build needs no third image.
-FROM docker.io/cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c AS fetch
+FROM docker.io/cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e AS fetch
 
 ARG MEILISEARCH_VERSION
 # sha256 of meilisearch-linux-amd64 for v1.54.0, taken from the `digest` field of the GitHub
@@ -42,10 +42,10 @@ RUN set -eux; \
 
 # --- Stage 3: the Cloudron app image ---------------------------------------------------------
 # The final stage must be this exact base so the Cloudron file manager, web terminal, and log
-# viewer work. Tag 5.0.0 resolves to this digest (Ubuntu 24.04, glibc 2.39).
-FROM docker.io/cloudron/base:5.0.0@sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c
+# viewer work. Tag 5.1.0 resolves to this digest (Ubuntu 24.04, glibc 2.39).
+FROM docker.io/cloudron/base:5.1.0@sha256:1c0666c9abe9e2090d33686826d4e97769b799124573118d41e0d7485135748e
 
-# cloudron/base:5.0.0 already provides gosu, curl, jq, openssl, file, and coreutils, which is
+# cloudron/base:5.1.0 already provides gosu, curl, jq, openssl, file, and coreutils, which is
 # everything the entrypoint and the backup script need. Nothing is installed with apt, so the
 # build is reproducible from the three pinned digests above and one pinned sha256.
 

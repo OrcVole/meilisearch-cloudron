@@ -1,6 +1,8 @@
 [1.1.0]
 
-- Upstream Meilisearch 1.53.2 to 1.54.0. Breaking API change to dynamic search rules `actions` field (list restructured to object with `pin` and `scale` sub-fields); existing rules are migrated automatically during upgrade. New DSR scale action for boosting, deboosting or hiding documents. New `/mcp` endpoint for Model Context Protocol (requires `mcpRoute` experimental feature). Auth crate internal dependency bump (no operator action required). Two new experimental settings: `MEILI_EXPERIMENTAL_DSR_FUEL_MAX_SCALE_ACTIONS` and `MEILI_EXPERIMENTAL_DSR_FUEL_SCALE_FUEL`.
+- Upstream Meilisearch 1.53.2 to 1.54.0. Breaking API change to dynamic search rules `actions` field (list restructured to object with `pin` and `scale` sub-fields); existing rules are migrated automatically during upgrade. New DSR scale action for boosting, deboosting or hiding documents. New `/mcp` endpoint for Model Context Protocol (requires `mcpRoute` experimental feature). Auth crate internal dependency bump; no operator action required. Two new experimental settings: `MEILI_EXPERIMENTAL_DSR_FUEL_MAX_SCALE_ACTIONS` and `MEILI_EXPERIMENTAL_DSR_FUEL_SCALE_FUEL`.
+- Base image cloudron/base 5.0.0 to 5.1.0: the Ubuntu 24.04.4 point release, with its OS security
+  updates. Same Ubuntu 24.04 release and glibc 2.39.
 
 [1.0.3]
 

@@ -1,3 +1,20 @@
+[1.2.0]
+
+- Restoring a backup now rolls the search data back too. Before this release, an in-place restore
+  returned `/app/data` to the backup but left the live search store as it was, because the store
+  lives in a persistent directory the platform does not touch on restore. The package now declares
+  a `restoreCommand`: after a restore, the live store is moved aside to `/app/db/quarantine-<time>`
+  (kept for 30 days) and rebuilt from the backup's snapshot. If a backup carries no snapshot, the
+  live store is kept and a warning is logged, rather than being replaced by nothing.
+- Each backup now also takes a Meilisearch dump beside the snapshot. The dump is the
+  version-portable artefact, and it gives the upgrade-failure fallback something to rebuild from.
+  Set `MEILISEARCH_BACKUP_DUMP=false` in `/app/data/env` to skip it on a very large store.
+- A failed backup is now visible. It writes `/app/data/BACKUP-FAILED.txt`, which the app prints in
+  its log at every start until a later backup succeeds. The backup command still reports success
+  to the platform, because on Cloudron a failing backup command stops the backup of every other app
+  on the server.
+- Thanks to james for the review that found all three.
+
 [1.1.0]
 
 - Upstream Meilisearch 1.53.2 to 1.54.0. Breaking API change to dynamic search rules `actions` field (list restructured to object with `pin` and `scale` sub-fields); existing rules are migrated automatically during upgrade. New DSR scale action for boosting, deboosting or hiding documents. New `/mcp` endpoint for Model Context Protocol (requires `mcpRoute` experimental feature). Auth crate internal dependency bump; no operator action required. Two new experimental settings: `MEILI_EXPERIMENTAL_DSR_FUEL_MAX_SCALE_ACTIONS` and `MEILI_EXPERIMENTAL_DSR_FUEL_SCALE_FUEL`.

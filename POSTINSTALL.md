@@ -25,3 +25,10 @@ curl $CLOUDRON-APP-ORIGIN/indexes -H "Authorization: Bearer PASTE-MASTER-KEY-HER
 Meilisearch issues afterwards is derived from it, so replacing it would silently invalidate every
 key a consumer already holds. The full topology, the backup and restore design, and the wiring
 recipes for LibreChat, Linkwarden, Strapi, and n8n are in the README and `docs/PACKAGING-NOTES.md`.
+
+**Backups and restores.** Every backup takes a Meilisearch snapshot, plus a dump unless
+`MEILISEARCH_BACKUP_DUMP=false` is set in `/app/data/env`. Restoring a backup rolls the search data
+back to that snapshot; the previous live store is kept for 30 days in `/app/db/quarantine-<time>`.
+If a backup could not take its snapshot, it still completes, so that the other apps on your server
+are backed up, but it writes `/app/data/BACKUP-FAILED.txt`, and the app's log repeats that warning
+at every start until a later backup succeeds.

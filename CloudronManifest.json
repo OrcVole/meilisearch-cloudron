@@ -7,9 +7,9 @@
   "changelog": "file://CHANGELOG.md",
   "icon": "file://logo.png",
   "iconUrl": "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/logo.png",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "upstreamVersion": "1.54.0",
-  "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:e4f2d03e005ac5ba0a13bb328e644e4ff2d327cfb3a80c0fc1689747cb2cb6bd",
+  "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:efe69d1c7daea773ee3dd995a155137c99fb0e51cccea88471a5b991b367c682",
   "healthCheckPath": "/health",
   "httpPort": 7700,
   "addons": {
@@ -19,6 +19,7 @@
     "/app/db"
   ],
   "backupCommand": "/app/code/backup-snapshot.sh",
+  "restoreCommand": "/app/code/restore-flag.sh",
   "memoryLimit": 4294967296,
   "postInstallMessage": "file://POSTINSTALL.md",
   "checklist": {

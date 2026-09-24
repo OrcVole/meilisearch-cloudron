@@ -63,12 +63,13 @@ COPY --from=upstream /usr/lib/libgcc_s.so.1 /app/code/musl/libgcc_s.so.1
 # Package scripts.
 COPY start.sh /app/code/start.sh
 COPY backup-snapshot.sh /app/code/backup-snapshot.sh
+COPY restore-flag.sh /app/code/restore-flag.sh
 COPY meilitool /app/code/meilitool
 
 RUN set -eux; \
     ln -sf ld-musl-x86_64.so.1 /app/code/musl/libc.musl-x86_64.so.1; \
     chmod 0755 /app/code/meilisearch /app/code/meilitool.bin /app/code/meilitool \
-               /app/code/start.sh /app/code/backup-snapshot.sh
+               /app/code/start.sh /app/code/backup-snapshot.sh /app/code/restore-flag.sh
 
 # Record the pinned upstream version in the image, for log output and for the boot-time version
 # marker that the restore decision tree in ADR 0005 compares against.

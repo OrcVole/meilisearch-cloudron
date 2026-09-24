@@ -359,6 +359,41 @@ choose_import_dump_first() {
 }
 
 # ---------------------------------------------------------------------------------------------
+# 6b. A backup that failed says so on every boot. The backup command exits 0 even when it fails,
+#     because on Cloudron one app's failing backup command aborts the whole server's backup run
+#     (field guide #312), so this file is how a failure reaches the operator instead.
+# ---------------------------------------------------------------------------------------------
+if [[ -f "${DATA}/BACKUP-FAILED.txt" ]]; then
+  warn "the last backup did not complete; details follow and in ${DATA}/.last-backup.log"
+  sed 's/^/==> [start]   /' "${DATA}/BACKUP-FAILED.txt" >&2 || true
+fi
+
+# ---------------------------------------------------------------------------------------------
+# 6c. A restore happened (restore-flag.sh left the flag). /app/db is a persistentDir, so an
+#     in-place restore leaves the live store in place, and without this the restore rolled back
+#     /app/data but not the search data (field guide #311). Move the live store aside and let leg 1
+#     rebuild it from the restored artefact. If the restored backup carries no artefact (its
+#     backup command failed), keep the live store: replacing it with nothing would lose the data
+#     the user still has, which is worse than not rolling back, and say so loudly.
+#     A clone arrives with an empty /app/db, so there is nothing to move and leg 1 runs anyway.
+# ---------------------------------------------------------------------------------------------
+RESTORE_FLAG="${DB}/.restore-pending"
+if [[ -f "${RESTORE_FLAG}" ]]; then
+  rm -f "${RESTORE_FLAG}"
+  if [[ -e "${STORE}" ]]; then
+    if [[ -n "$(newest_file "${SNAPDIR}" '*.snapshot')" || -n "$(newest_file "${DUMPDIR}" '*.dump')" ]]; then
+      log "restore  : a backup was restored over this app; replacing the live store with the restored artefact"
+      quarantine_store "a backup was restored, and the live store is newer than the backup"
+    else
+      warn "a backup was restored, but it carries no snapshot or dump (its backup command failed)." \
+           "The live store is KEPT, so the search data was NOT rolled back to the backup."
+    fi
+  else
+    log "restore  : restore flag found and no live store (a clone); leg 1 rebuilds from the artefact"
+  fi
+fi
+
+# ---------------------------------------------------------------------------------------------
 # 7. The boot decision tree (ADR 0005). Exactly one of these legs runs.
 # ---------------------------------------------------------------------------------------------
 ARGS=()

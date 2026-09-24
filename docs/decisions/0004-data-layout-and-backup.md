@@ -81,3 +81,21 @@ and for defence against a future naming change.
 The endpoint file works as designed and is the only reason the temporary container can find the
 application. `hostname -I` was filtered for the first IPv4 rather than the first field, because it
 can lead with an IPv6 address.
+
+**2026-09-24, package 1.2.0: a review from Cloudron staff found three gaps, all confirmed.**
+Forum post 129974 (forum.cloudron.io, topic 15761).
+
+1. **An in-place restore did not roll back the search data.** `/app/db` is a `persistentDir`, and
+   the platform leaves it untouched on restore. With no `restoreCommand`, boot took leg 2 on the
+   live store. Gate 3 measured it (260 000 documents in the backup, 1 000 000 after the restore) and
+   scored it PASS. **Fixed:** `restoreCommand` is now `restore-flag.sh`, which writes
+   `/app/db/.restore-pending`. `start.sh` then quarantines the live store and imports the restored
+   snapshot, keeping the live store, with a warning, if the backup carries no artefact. The claim
+   above that "a restoreCommand cannot distinguish an in-place restore from an ordinary restart"
+   was the wrong way round: the command itself is the signal, because it runs only on restore and
+   clone.
+2. **The dump fallback read artefacts nothing produced.** **Fixed:** the backup command now dumps
+   after snapshotting (opt out with `MEILISEARCH_BACKUP_DUMP=false`).
+3. **A failed backup was invisible.** Exit 0 stays, because Cloudron 10.0.4's `fullBackup` aborts
+   the whole server's backup on one app's failure. But a failure now writes
+   `/app/data/BACKUP-FAILED.txt`, which `start.sh` prints at every boot.

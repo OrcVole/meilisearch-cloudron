@@ -151,6 +151,81 @@ else
   bad "did not become healthy after a restart over the existing store"
 fi
 
+# --- 1.2.0: the backup and restore contract (forum post 129974, field guide #311 to #313) --------
+# The platform runs backupCommand in a throwaway container from the app image. On Cloudron 10 it
+# shares the app's network namespace; restoreCommand runs before the app starts. Both are mimicked
+# here with the same mounts, a read-only root and no CLOUDRON_* environment.
+backup_now() {  # runs backup-snapshot.sh the way Cloudron 10 does, against the live $NAME
+  "$ENGINE" run --rm --net "container:$NAME" --read-only --tmpfs /run --tmpfs /tmp \
+    -v "$VOL":/app/data -v "$DBVOL":/app/db --entrypoint /app/code/backup-snapshot.sh "$IMAGE" >/dev/null 2>&1
+}
+restore_flag() {  # runs restore-flag.sh the way Cloudron does, with the app stopped
+  "$ENGINE" run --rm --net none --read-only --tmpfs /run --tmpfs /tmp \
+    -v "$VOL":/app/data -v "$DBVOL":/app/db --entrypoint /app/code/restore-flag.sh "$IMAGE" >/dev/null 2>&1
+}
+in_data() { "$ENGINE" run --rm -v "$VOL":/app/data -v "$DBVOL":/app/db --entrypoint sh "$IMAGE" -c "$1" 2>/dev/null; }
+doc_count() {
+  curl -s -m 5 -H "Authorization: Bearer ${KEY}" "$B/indexes/smoke/stats" 2>/dev/null \
+    | grep -o '"numberOfDocuments":[0-9]*' | cut -d: -f2
+}
+wait_count() {  # wait_count <n>: indexing is asynchronous
+  for i in $(seq 1 30); do [ "$(doc_count)" = "$1" ] && return 0; sleep 1; done; return 1
+}
+
+# 8b. A backup produces a snapshot AND a dump, and clears any earlier failure notice.
+backup_now
+in_data 'test -s /app/data/snapshots/data.ms.snapshot' && ok "backup wrote a snapshot" || bad "backup wrote no snapshot"
+in_data 'ls /app/data/dumps/*.dump >/dev/null 2>&1' && ok "backup wrote a dump (the version-portable fallback)" \
+  || bad "backup wrote no dump"
+in_data 'test ! -e /app/data/BACKUP-FAILED.txt' && ok "a good backup leaves no failure notice" || bad "failure notice present after a good backup"
+AT_BACKUP=$(doc_count)
+
+# 8c. THE ROLLBACK: add documents after the backup, restore, and the count must return to the
+#     backup's, not stay at the churned count. 1.1.0 kept the live store here (field guide #311).
+curl -s -m 10 -X POST "$B/indexes/smoke/documents" -H "Authorization: Bearer ${KEY}" \
+  -H 'content-type: application/json' \
+  -d '[{"id":2,"t":"after backup"},{"id":3,"t":"after backup"},{"id":4,"t":"after backup"},{"id":5,"t":"after backup"}]' >/dev/null 2>&1
+CHURNED=$(( AT_BACKUP + 4 ))
+wait_count "$CHURNED" && ok "churned after the backup: ${AT_BACKUP} -> ${CHURNED} documents" || bad "churn did not land (count $(doc_count))"
+"$ENGINE" rm -f "$NAME" >/dev/null 2>&1
+restore_flag && ok "restoreCommand ran and exited 0" || bad "restoreCommand failed"
+start_app "$NAME" >/dev/null 2>&1
+if wait_health 90 && wait_count "$AT_BACKUP"; then
+  ok "restore rolled the search data back: ${CHURNED} -> ${AT_BACKUP} documents"
+else
+  bad "restore did NOT roll back: ${AT_BACKUP} at backup, ${CHURNED} before restore, $(doc_count) after"
+fi
+in_data 'ls -d /app/db/quarantine-* >/dev/null 2>&1' && ok "the replaced store was kept in quarantine" || bad "no quarantine directory"
+in_data 'test ! -e /app/db/.restore-pending' && ok "restore flag consumed" || bad "restore flag left behind"
+
+# 8d. A restore of a backup that carries NO artefact must keep the live store, not replace it with
+#     nothing, and must say so.
+curl -s -m 10 -X POST "$B/indexes/smoke/documents" -H "Authorization: Bearer ${KEY}" \
+  -H 'content-type: application/json' -d '[{"id":9,"t":"kept"}]' >/dev/null 2>&1
+KEEP=$(( AT_BACKUP + 1 )); wait_count "$KEEP"
+"$ENGINE" rm -f "$NAME" >/dev/null 2>&1
+in_data 'rm -f /app/data/snapshots/* /app/data/dumps/*'
+restore_flag
+start_app "$NAME" >/dev/null 2>&1
+if wait_health 90 && wait_count "$KEEP"; then ok "a restore with no artefact kept the live store (${KEEP} documents)"
+else bad "a restore with no artefact lost data: $(doc_count) documents, expected ${KEEP}"; fi
+"$ENGINE" logs "$NAME" 2>&1 | grep -ac 'NOT rolled back' >/dev/null && ok "and warned that nothing was rolled back" || bad "no warning for the unrollable restore"
+
+# 8e. A failed backup is VISIBLE: with the app stopped the backup command cannot snapshot, still
+#     exits 0 (one app's failure must not abort the server's backup, #312), writes the notice, and
+#     the next boot prints it. A later good backup clears it.
+"$ENGINE" stop -t 20 "$NAME" >/dev/null 2>&1
+"$ENGINE" run --rm --read-only --tmpfs /run --tmpfs /tmp -v "$VOL":/app/data -v "$DBVOL":/app/db \
+  --entrypoint /app/code/backup-snapshot.sh "$IMAGE" >/dev/null 2>&1 \
+  && ok "a failing backup still exits 0" || bad "a failing backup exited non-zero (would abort the whole server backup)"
+in_data 'test -s /app/data/BACKUP-FAILED.txt' && ok "a failing backup wrote BACKUP-FAILED.txt" || bad "no failure notice after a failed backup"
+"$ENGINE" rm -f "$NAME" >/dev/null 2>&1
+start_app "$NAME" >/dev/null 2>&1
+wait_health 90
+"$ENGINE" logs "$NAME" 2>&1 | grep -ac 'last backup did not complete' >/dev/null && ok "the next boot announced the failed backup" || bad "boot did not announce the failed backup"
+backup_now
+in_data 'test ! -e /app/data/BACKUP-FAILED.txt' && ok "a later good backup cleared the notice" || bad "notice survived a good backup"
+
 # 9. And the refusal: with the store present but the key file gone, start.sh must REFUSE to boot
 #    rather than generate a fresh key. Booting here is the data-loss path this test exists for.
 "$ENGINE" rm -f "$NAME" >/dev/null 2>&1

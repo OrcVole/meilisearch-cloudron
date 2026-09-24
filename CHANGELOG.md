@@ -1,3 +1,12 @@
+[1.3.0]
+
+- Tenant tokens, for apps that give each of their users a search limited to their own documents.
+  Set `MEILISEARCH_TENANT_TOKEN_KEY=true` in `/app/data/env` and restart: the app creates a
+  search-only signing key and writes it to `/app/data/tenant-token-signing-key.env`. Setting it back
+  to `false` deletes the key and revokes every token it signed. `meili-token.sh` in the Terminal signs,
+  decodes and tests tokens, and manages per-app signing keys. See `docs/TENANT-TOKENS.md`.
+- The tooling is james's, ported from his package with thanks.
+
 [1.2.0]
 
 - Restoring a backup now rolls the search data back too. Before this release, an in-place restore

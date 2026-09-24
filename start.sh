@@ -32,6 +32,8 @@
 #   MEILISEARCH_RETAIN_SNAPSHOTS        how many snapshot files to keep; default 2
 #   MEILISEARCH_RETAIN_DUMPS            how many dump files to keep; default 2
 #   MEILISEARCH_QUARANTINE_DAYS         age at which a quarantined store is deleted; default 30
+#   MEILISEARCH_TENANT_TOKEN_KEY        true to provision the tenant-token signing key; false (the
+#                                       default) deletes it, revoking its tokens. See section 9b.
 #
 # Forced by the package and overwritten after the file is sourced, so setting them has no
 # effect: MEILI_ENV, MEILI_HTTP_ADDR, MEILI_DB_PATH, MEILI_SNAPSHOT_DIR, MEILI_DUMP_DIR,
@@ -502,6 +504,52 @@ done < <(find "${DB}" -maxdepth 1 -type d -name 'quarantine-*' \
   done
   echo "==> [start] WARNING: no healthy response within ${HEALTH_TIMEOUT}s;" \
        "${MARKER} was left unchanged" >&2
+) &
+
+# ---------------------------------------------------------------------------------------------
+# 9b. The packaged tenant-token signing key (docs/TENANT-TOKENS.md; ported from james's package).
+#     MEILISEARCH_TENANT_TOKEN_KEY=true in /app/data/env creates one search-only API key, named
+#     "Cloudron tenant tokens", and writes its uid and key to ${TENANT_KEY_FILE} (0600). Setting it
+#     back to false deletes that key, which revokes every token it signed. Meilisearch picks the
+#     uid, so re-enabling makes a new key rather than reviving the old one. It needs the server's
+#     API, so, like the marker, it runs once the server is healthy and outlives the exec below.
+#     A failure is logged and does not stop the server: search keeps working with the master key.
+# ---------------------------------------------------------------------------------------------
+TENANT_KEY_FILE="${DATA}/tenant-token-signing-key.env"
+TENANT_KEY_NAME="Cloudron tenant tokens"
+(
+  set +e
+  tk_api() {
+    curl -sS -m 10 --fail-with-body -X "$1" -H "Authorization: Bearer ${MEILI_MASTER_KEY}" \
+      -H 'Content-Type: application/json' ${3:+--data "$3"} "${LOCAL}$2"
+  }
+  tk_deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+  until curl -fsS -m 5 -o /dev/null "${LOCAL}/health" 2>/dev/null; do
+    (( $(date +%s) < tk_deadline )) || { echo "==> [start] tenant   : server never healthy, signing key left as it was" >&2; exit 0; }
+    sleep 2
+  done
+  keys="$(tk_api GET '/keys?limit=1000')" || { echo "==> [start] tenant   : could not list API keys, signing key left as it was" >&2; exit 0; }
+  mine="$(jq -c --arg n "${TENANT_KEY_NAME}" '[.results[] | select(.name == $n)]' <<< "${keys}")"
+  if [[ "${MEILISEARCH_TENANT_TOKEN_KEY:-false}" == true ]]; then
+    key="$(jq -c '.[0] // empty' <<< "${mine}")"
+    if [[ -z "${key}" ]]; then
+      key="$(tk_api POST /keys "$(jq -nc --arg n "${TENANT_KEY_NAME}" '{name: $n,
+        description: "Parent key for signing tenant tokens. Managed by the Cloudron package, see /app/data/env",
+        actions: ["search"], indexes: ["*"], expiresAt: null}')")" \
+        || { echo "==> [start] tenant   : could not create the signing key" >&2; exit 0; }
+      echo "==> [start] tenant   : created the signing key \"${TENANT_KEY_NAME}\""
+    fi
+    ( umask 077; jq -r '"TENANT_TOKEN_API_KEY_UID=\(.uid)\nTENANT_TOKEN_API_KEY=\(.key)"' <<< "${key}" > "${TENANT_KEY_FILE}" )
+    chown cloudron:cloudron "${TENANT_KEY_FILE}"; chmod 0600 "${TENANT_KEY_FILE}"
+    echo "==> [start] tenant   : signing key uid $(jq -r .uid <<< "${key}") written to ${TENANT_KEY_FILE}"
+  else
+    for uid in $(jq -r '.[].uid' <<< "${mine}"); do
+      tk_api DELETE "/keys/${uid}" >/dev/null \
+        && echo "==> [start] tenant   : deleted signing key ${uid}; every token it signed is revoked" \
+        || echo "==> [start] tenant   : could not delete signing key ${uid}" >&2
+    done
+    rm -f "${TENANT_KEY_FILE}"
+  fi
 ) &
 
 # ---------------------------------------------------------------------------------------------

@@ -226,6 +226,45 @@ wait_health 90
 backup_now
 in_data 'test ! -e /app/data/BACKUP-FAILED.txt' && ok "a later good backup cleared the notice" || bad "notice survived a good backup"
 
+# --- 1.3.0: tenant tokens (ported from james's package, docs/TENANT-TOKENS.md) ----------------------
+# 8f. Enable the packaged signing key through /app/data/env, sign a token limited to one tenant with
+#     the in-image tool, prove the filter holds and other indexes are refused, then disable the key
+#     and prove the same token is revoked. The key file must be 0600 and never reach the logs.
+tk() { "$ENGINE" exec "$NAME" meili-token.sh "$@" 2>&1; }
+restart_app() { "$ENGINE" rm -f "$NAME" >/dev/null 2>&1; start_app "$NAME" >/dev/null 2>&1; wait_health 90; }
+tsearch() {  # tsearch <token> <index> -> HTTP code, body in /tmp of the test host
+  curl -s -m 5 -o "${TMPDIR:-/tmp}/meili-tk-$$" -w '%{http_code}' -X POST "$B/indexes/$2/search" \
+    -H "Authorization: Bearer $1" -H 'content-type: application/json' -d '{"q":""}' 2>/dev/null || echo 000; }
+curl -s -m 10 -X PATCH "$B/indexes/tenants/settings" -H "Authorization: Bearer ${KEY}" -H 'content-type: application/json' \
+  -d '{"filterableAttributes":["tenant_id"]}' >/dev/null 2>&1
+curl -s -m 10 -X POST "$B/indexes/tenants/documents?primaryKey=id" -H "Authorization: Bearer ${KEY}" -H 'content-type: application/json' \
+  -d '[{"id":1,"tenant_id":42,"t":"mine"},{"id":2,"tenant_id":7,"t":"theirs"}]' >/dev/null 2>&1
+for i in $(seq 1 20); do
+  n=$(curl -s -m 5 -H "Authorization: Bearer ${KEY}" "$B/indexes/tenants/stats" 2>/dev/null | grep -o '"numberOfDocuments":[0-9]*' | cut -d: -f2)
+  [ "${n:-0}" = 2 ] && break; sleep 2; done
+in_data 'printf "MEILISEARCH_TENANT_TOKEN_KEY=true\n" >> /app/data/env'
+restart_app
+for i in $(seq 1 15); do in_data 'test -s /app/data/tenant-token-signing-key.env' && break; sleep 2; done
+perms=$(in_data 'stat -c "%a %U:%G" /app/data/tenant-token-signing-key.env')
+[ "$perms" = "600 cloudron:cloudron" ] && ok "tenant signing key written, 600 cloudron:cloudron" || bad "tenant key file perms='${perms:-missing}'"
+SK=$(in_data 'sed -n "s/^TENANT_TOKEN_API_KEY=//p" /app/data/tenant-token-signing-key.env')
+[ -n "$SK" ] && ! "$ENGINE" logs "$NAME" 2>&1 | grep -aqF "$SK" && ok "signing key is not in the logs" || bad "signing key missing or leaked into the logs"
+TOKEN=$(tk create --index tenants --filter 'tenant_id = 42' --expires 1h | tail -1)
+case "$TOKEN" in *.*.*) ok "meili-token.sh signed a token";; *) bad "meili-token.sh create failed: $TOKEN";; esac
+code=$(tsearch "$TOKEN" tenants)
+[ "$code" = 200 ] && grep -q '"mine"' "${TMPDIR:-/tmp}/meili-tk-$$" && ! grep -q '"theirs"' "${TMPDIR:-/tmp}/meili-tk-$$" \
+  && ok "the token sees its own tenant only" || bad "tenant filter not enforced (HTTP $code)"
+code=$(tsearch "$TOKEN" smoke)
+[ "$code" = 403 ] || [ "$code" = 401 ] && ok "the token is refused on another index (HTTP $code)" || bad "token reached another index (HTTP $code)"
+tk decode "$TOKEN" | grep -q 'Signing key: exists' && ok "decode reports the signing key" || bad "decode did not report the signing key"
+in_data 'sed -i "s/^MEILISEARCH_TENANT_TOKEN_KEY=true$/MEILISEARCH_TENANT_TOKEN_KEY=false/" /app/data/env'
+restart_app
+for i in $(seq 1 15); do in_data 'test ! -e /app/data/tenant-token-signing-key.env' && break; sleep 2; done
+in_data 'test ! -e /app/data/tenant-token-signing-key.env' && ok "disabling removed the key file" || bad "key file survived disabling"
+code=$(tsearch "$TOKEN" tenants)
+[ "$code" = 403 ] || [ "$code" = 401 ] && ok "disabling revoked the token (HTTP $code)" || bad "token still works after disabling (HTTP $code)"
+rm -f "${TMPDIR:-/tmp}/meili-tk-$$"
+
 # 9. And the refusal: with the store present but the key file gone, start.sh must REFUSE to boot
 #    rather than generate a fresh key. Booting here is the data-loss path this test exists for.
 "$ENGINE" rm -f "$NAME" >/dev/null 2>&1

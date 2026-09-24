@@ -32,3 +32,8 @@ back to that snapshot; the previous live store is kept for 30 days in `/app/db/q
 If a backup could not take its snapshot, it still completes, so that the other apps on your server
 are backed up, but it writes `/app/data/BACKUP-FAILED.txt`, and the app's log repeats that warning
 at every start until a later backup succeeds.
+
+**Multi-tenancy.** To sign [tenant tokens](https://www.meilisearch.com/blog/multi-tenancy), set
+`MEILISEARCH_TENANT_TOKEN_KEY=true` in `/app/data/env` and restart. The signing key is written to
+`/app/data/tenant-token-signing-key.env`. Run `meili-token.sh --help` in the Terminal to sign and
+inspect tokens.

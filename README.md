@@ -244,6 +244,8 @@ with root's authority, so treat it as privileged.
 | `MEILISEARCH_RETAIN_SNAPSHOTS` | `2` | snapshot files kept in `/app/data/snapshots` |
 | `MEILISEARCH_RETAIN_DUMPS` | `2` | dump files kept in `/app/data/dumps` |
 | `MEILISEARCH_QUARANTINE_DAYS` | `30` | age at which a quarantined data store is deleted |
+| `MEILISEARCH_BACKUP_DUMP` | `true` | `false` skips the dump each backup takes beside the snapshot |
+| `MEILISEARCH_TENANT_TOKEN_KEY` | `false` | `true` provisions the tenant-token signing key; `false` deletes it and revokes its tokens ([docs/TENANT-TOKENS.md](docs/TENANT-TOKENS.md)) |
 
 Any other `MEILI_EXPERIMENTAL_*` flag the pinned version accepts can be set the same way. Note
 that the experimental features controlled through `PATCH /experimental-features` are runtime API
@@ -362,6 +364,7 @@ large dump import. See `docs/PACKAGING-NOTES.md` for what is verified versus ass
 ## Documentation
 
 - `docs/decisions/` carries the numbered architecture decision records behind this package.
+- `docs/TENANT-TOKENS.md` covers multi-tenancy: the signing key and the `meili-token.sh` tool, ported from james's package.
 - `docs/PACKAGING-NOTES.md` is the anonymised, verified-versus-assumed log for this package.
 - `docs/FOR-CLOUDRON.md` carries platform observations offered back to the Cloudron team.
 - `docs/FOR-UPSTREAM.md` carries packaging observations offered back to the Meilisearch team.

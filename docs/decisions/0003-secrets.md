@@ -60,3 +60,12 @@ the entrypoint exists.
   `MEILI_EXPERIMENTAL_ENABLE_METRICS`, the last confirmed by `/metrics` answering 200) while both
   structural variables were overwritten by the package, leaving the instance in production mode
   with its store on `/app/db`.
+
+- **2026-09-24, package 1.3.0: a second secret file, opt-in.** With
+  `MEILISEARCH_TENANT_TOKEN_KEY=true`, the app keeps a search-only API key in
+  `/app/data/tenant-token-signing-key.env` (0600, cloudron), for signing tenant tokens. It is derived
+  from the master key like any other API key, so the rule above still holds: the master key is never
+  regenerated. The key is written only after the server answers `/health`, is never logged (the smoke
+  test checks this), and is deleted from both Meilisearch and disk when the setting goes back to
+  `false`. It lives in `/app/data`, so backups carry it, just as they carry the master key.
+  The tooling is ported from james's package (docs/TENANT-TOKENS.md).

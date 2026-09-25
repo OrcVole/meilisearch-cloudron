@@ -301,6 +301,57 @@
             "creationDate": "Thu, 24 Sep 2026 20:15:02 GMT",
             "ts": 1790280902000,
             "publishState": "published"
+        },
+        "1.3.0": {
+            "manifest": {
+                "id": "io.github.orcvole.meilisearch",
+                "title": "Meilisearch",
+                "author": "OrcVole",
+                "tagline": "Lightning-fast, typo-tolerant search API for your own apps and data",
+                "description": "<upstream>1.54.0</upstream>\n\nMeilisearch is an open source, typo-tolerant search engine written in Rust. It indexes your\ndocuments and serves fast, relevant full-text search, filtering, and sorting over a simple REST\nAPI, which makes it a building block for application search, site search, and chat or knowledge\nbase search, without the operational weight of a larger search platform.\n\nThis package runs Meilisearch on Cloudron as a headless search API, always in production mode:\n\n- No dashboard, no single sign-on, and no interactive login screen sit in front of the API,\n  because the application exists to serve programmatic clients, and a login wall would break every\n  one of them.\n- `GET /health` stays open with no credential, which is what the platform uses to judge whether\n  the application is running. Every other route requires a master key, generated on first launch,\n  or a scoped key minted from it.\n- The Meilisearch data store is treated as the database it is: it lives on a Cloudron\n  `persistentDirs` path so its constant background churn stays clear of the ordinary backup file\n  walk, while a snapshot taken through the application's own API rides the regular backup, and is\n  imported back automatically on a clone or a restore.\n\nThis is a community package. It tracks upstream Meilisearch releases and keeps the upstream binary\nunmodified. Meilisearch and the Meilisearch name and logo are trademarks of their respective owner.\nThis package is community-maintained and is not affiliated with or endorsed by the Meilisearch\nproject.\n\nMeilisearch itself is dual licensed (MIT for the core engine, Business Source License 1.1 for a\nsmaller enterprise edition subset). This package configures and runs only the MIT-licensed\ncommunity engine and enables no enterprise edition feature.\n",
+                "changelog": "- Tenant tokens, for apps that give each of their users a search limited to their own documents.\n  Set `MEILISEARCH_TENANT_TOKEN_KEY=true` in `/app/data/env` and restart: the app creates a\n  search-only signing key and writes it to `/app/data/tenant-token-signing-key.env`. Setting it back\n  to `false` deletes the key and revokes every token it signed. `meili-token.sh` in the Terminal signs,\n  decodes and tests tokens, and manages per-app signing keys. See `docs/TENANT-TOKENS.md`.\n- A backup now records which dump it completed, in `/app/data/dumps/latest`, and a rebuild imports\n  that dump rather than whichever is newest, so a half-written dump is never used. Backups made\n  before 1.3.0 have no pointer and fall back to the newest dump, as before.\n- The tooling and the dump pointer are james's, ported from his package with thanks.\n",
+                "icon": "file://logo.png",
+                "iconUrl": "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/logo.png",
+                "version": "1.3.0",
+                "upstreamVersion": "1.54.0",
+                "dockerImage": "ghcr.io/orcvole/meilisearch-cloudron@sha256:cbeef5d877064a1bbe74a0f59da18c10571f5d0f946b9d6e2a5eb6b5983c9649",
+                "healthCheckPath": "/health",
+                "httpPort": 7700,
+                "addons": {
+                    "localstorage": {}
+                },
+                "persistentDirs": [
+                    "/app/db"
+                ],
+                "backupCommand": "/app/code/backup-snapshot.sh",
+                "restoreCommand": "/app/code/restore-flag.sh",
+                "memoryLimit": 4294967296,
+                "postInstallMessage": "### Meilisearch is running and ready\n\nNo setup wizard. Get your master key below, then point your apps or your own code at Meilisearch\nwhenever you want.\n\n**Get your master key.** Open this app's Terminal (the `>_` button above) and run\n`cat /app/data/master-key`. Send it as an `Authorization: Bearer <key>` header on every request.\n\n**One route is public.** `GET /health` answers with no credential; it is what Cloudron itself\nchecks. Every other route, including `GET /version`, requires the master key or a key minted from\nit.\n\n**Mint a scoped key for each consumer**, rather than handing out the master key itself, with\n`POST /keys`; see the README for a worked example. Revoke a scoped key at any time without\ndisturbing any other consumer.\n\n**Test from your own computer:**\n\n```\ncurl $CLOUDRON-APP-ORIGIN/health\ncurl $CLOUDRON-APP-ORIGIN/indexes -H \"Authorization: Bearer PASTE-MASTER-KEY-HERE\"\n```\n\n**Good to know.** The master key is generated once and never regenerated automatically: every key\nMeilisearch issues afterwards is derived from it, so replacing it would silently invalidate every\nkey a consumer already holds. The full topology, the backup and restore design, and the wiring\nrecipes for LibreChat, Linkwarden, Strapi, and n8n are in the README and `docs/PACKAGING-NOTES.md`.\n\n**Backups and restores.** Every backup takes a Meilisearch snapshot, plus a dump unless\n`MEILISEARCH_BACKUP_DUMP=false` is set in `/app/data/env`. Restoring a backup rolls the search data\nback to that snapshot; the previous live store is kept for 30 days in `/app/db/quarantine-<time>`.\nIf a backup could not take its snapshot, it still completes, so that the other apps on your server\nare backed up, but it writes `/app/data/BACKUP-FAILED.txt`, and the app's log repeats that warning\nat every start until a later backup succeeds.\n\n**Multi-tenancy.** To sign [tenant tokens](https://www.meilisearch.com/blog/multi-tenancy), set\n`MEILISEARCH_TENANT_TOKEN_KEY=true` in `/app/data/env` and restart. The signing key is written to\n`/app/data/tenant-token-signing-key.env`. Run `meili-token.sh --help` in the Terminal to sign and\ninspect tokens.\n",
+                "checklist": {
+                    "masterkey": {
+                        "message": "Get your master key: open a Terminal for this app (the `>_` button) and run `cat /app/data/master-key`. Every route except GET /health requires it, or a key minted from it via POST /keys. See POSTINSTALL.md."
+                    }
+                },
+                "tags": [
+                    "search",
+                    "api",
+                    "developer"
+                ],
+                "mediaLinks": [
+                    "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/screenshots/api-search.png",
+                    "https://raw.githubusercontent.com/OrcVole/meilisearch-cloudron/main/screenshots/install-community-app.png"
+                ],
+                "website": "https://github.com/OrcVole/meilisearch-cloudron",
+                "documentationUrl": "https://github.com/OrcVole/meilisearch-cloudron",
+                "contactEmail": "Most+github@OrcadianVole.com",
+                "packagerName": "OrcVole",
+                "packagerUrl": "https://github.com/OrcVole/meilisearch-cloudron",
+                "manifestVersion": 2,
+                "minBoxVersion": "9.1.0"
+            },
+            "creationDate": "Fri, 25 Sep 2026 10:08:47 GMT",
+            "ts": 1790330927000,
+            "publishState": "published"
         }
     }
 }

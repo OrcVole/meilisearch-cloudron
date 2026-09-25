@@ -177,6 +177,8 @@ backup_now
 in_data 'test -s /app/data/snapshots/data.ms.snapshot' && ok "backup wrote a snapshot" || bad "backup wrote no snapshot"
 in_data 'ls /app/data/dumps/*.dump >/dev/null 2>&1' && ok "backup wrote a dump (the version-portable fallback)" \
   || bad "backup wrote no dump"
+in_data 'n=$(cat /app/data/dumps/latest) && test -s "/app/data/dumps/$n"' \
+  && ok "backup recorded its completed dump in dumps/latest" || bad "dumps/latest missing or names no dump"
 in_data 'test ! -e /app/data/BACKUP-FAILED.txt' && ok "a good backup leaves no failure notice" || bad "failure notice present after a good backup"
 AT_BACKUP=$(doc_count)
 

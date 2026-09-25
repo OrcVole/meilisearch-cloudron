@@ -45,6 +45,7 @@ POLL_INTERVAL=5
 POLL_TIMEOUT=600
 RETAIN_SNAPSHOTS="${MEILISEARCH_RETAIN_SNAPSHOTS:-2}"
 RETAIN_DUMPS=1
+LATEST_POINTER="${DUMPDIR}/latest"
 
 # The operator's override file, read for this one variable only: sourcing the whole file in a
 # temporary container would run whatever else it contains in a context it was never written for.
@@ -148,6 +149,16 @@ if [[ "${BACKUP_DUMP}" == true ]]; then
     DSTATUS="$(poll_task "${DUID}")"
     if [[ "${DSTATUS}" == succeeded ]]; then
       DUMP_NOTE="dump task ${DUID} completed"
+      # Record which dump this task wrote, so the boot tree imports only a dump known to be
+      # complete rather than whichever *.dump is newest, which could be half-written (james's
+      # package, ported in 1.3.0). Written via a temporary file, so a crash never leaves a
+      # truncated pointer.
+      DFILE="$(curl -fsS -m 15 -H "Authorization: Bearer ${KEY}" "${ENDPOINT}/tasks/${DUID}" 2>/dev/null \
+        | jq -r '.details.dumpUid // empty' 2>/dev/null || true)"
+      if [[ -n "${DFILE}" && -f "${DUMPDIR}/${DFILE}.dump" ]]; then
+        printf '%s\n' "${DFILE}.dump" > "${LATEST_POINTER}.tmp" 2>/dev/null \
+          && mv -f "${LATEST_POINTER}.tmp" "${LATEST_POINTER}" 2>/dev/null || true
+      fi
       if [[ -d "${DUMPDIR}" ]]; then
         while IFS= read -r victim; do
           [[ -n "${victim}" ]] && rm -f "${victim}" 2>/dev/null || true

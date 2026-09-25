@@ -17,6 +17,7 @@
 #     invocation, so no musl library is ever installed into a system path where a glibc binary
 #     from the base image could pick it up. See the History note in ADR 0001.
 
+# renovate: datasource=github-releases depName=meilisearch/meilisearch
 ARG MEILISEARCH_VERSION=1.54.0
 
 # --- Stage 1: the official upstream image, used only as a source for meilitool and musl ------

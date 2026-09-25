@@ -5,7 +5,10 @@
   search-only signing key and writes it to `/app/data/tenant-token-signing-key.env`. Setting it back
   to `false` deletes the key and revokes every token it signed. `meili-token.sh` in the Terminal signs,
   decodes and tests tokens, and manages per-app signing keys. See `docs/TENANT-TOKENS.md`.
-- The tooling is james's, ported from his package with thanks.
+- A backup now records which dump it completed, in `/app/data/dumps/latest`, and a rebuild imports
+  that dump rather than whichever is newest, so a half-written dump is never used. Backups made
+  before 1.3.0 have no pointer and fall back to the newest dump, as before.
+- The tooling and the dump pointer are james's, ported from his package with thanks.
 
 [1.2.0]
 

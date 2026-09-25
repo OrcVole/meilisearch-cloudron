@@ -212,6 +212,19 @@ newest_file() {
     | sort -rn | head -n 1 | cut -d' ' -f2-
 }
 
+# The dump to import: the one the last successful backup recorded in dumps/latest, when that file
+# still exists, so a half-written dump is never chosen; otherwise the newest by modification time,
+# which covers stores backed up before 1.3.0 and dumps made by hand (james's package, ported).
+newest_dump() {
+  local name
+  name="$(head -n 1 "${DUMPDIR}/latest" 2>/dev/null | tr -d '[:space:]')"
+  if [[ -n "${name}" && "${name}" != */* && -f "${DUMPDIR}/${name}" ]]; then
+    printf '%s\n' "${DUMPDIR}/${name}"
+    return 0
+  fi
+  newest_file "${DUMPDIR}" '*.dump'
+}
+
 # Compare two dotted versions. Echoes "older", "same" or "newer" for the first against the second.
 version_compare() {
   local a="$1" b="$2"
@@ -327,7 +340,7 @@ run_upgrade_phase() {
 choose_import() {
   local snapshot dump
   snapshot="$(newest_file "${SNAPDIR}" '*.snapshot')"
-  dump="$(newest_file "${DUMPDIR}" '*.dump')"
+  dump="$(newest_dump)"
   if [[ -n "${snapshot}" ]]; then
     ARGS=(--import-snapshot "${snapshot}" --ignore-missing-snapshot)
     log "import   : newest snapshot ${snapshot}"
@@ -335,7 +348,7 @@ choose_import() {
   fi
   if [[ -n "${dump}" ]]; then
     ARGS=(--import-dump "${dump}" --ignore-missing-dump)
-    log "import   : no snapshot found, newest dump ${dump}"
+    log "import   : no snapshot found, dump ${dump}"
     return 0
   fi
   return 1
@@ -345,11 +358,11 @@ choose_import() {
 # snapshot in the backup was written by the same version whose upgrade just failed.
 choose_import_dump_first() {
   local snapshot dump
-  dump="$(newest_file "${DUMPDIR}" '*.dump')"
+  dump="$(newest_dump)"
   snapshot="$(newest_file "${SNAPDIR}" '*.snapshot')"
   if [[ -n "${dump}" ]]; then
     ARGS=(--import-dump "${dump}" --ignore-missing-dump)
-    log "import   : newest dump ${dump}"
+    log "import   : dump ${dump}"
     return 0
   fi
   if [[ -n "${snapshot}" ]]; then
